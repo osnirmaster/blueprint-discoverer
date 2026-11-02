@@ -106,10 +106,16 @@ def git_head(path: Path) -> str:
         return ""
 
 
-def materialize_repo(spec: RepoSpec, ws: Workspace, base: Path) -> Path:
-    """Return a local path for the repo, shallow-cloning remote URLs into the workspace."""
+def materialize_repo(spec: RepoSpec, ws: Workspace, base: Path, refresh: bool = False) -> Path:
+    """Return a local path for the repo, shallow-cloning remote URLs into the workspace.
+
+    `refresh` moves an existing clone to the latest commit of `ref` (or the remote default branch).
+    """
     if spec.path:
-        return (base / spec.path).resolve()
+        path = (base / spec.path).resolve()
+        if not path.is_dir():
+            raise ValueError(f"repository '{spec.name}': {path} is not a directory")
+        return path
     if not spec.url:
         raise ValueError(f"repository '{spec.name}' needs either path or url")
     dest = ws.repos_dir / slugify(spec.name)
@@ -118,4 +124,7 @@ def materialize_repo(spec: RepoSpec, ws: Workspace, base: Path) -> Path:
         if spec.ref:
             cmd += ["--branch", spec.ref]
         subprocess.run([*cmd, spec.url, str(dest)], check=True)
+    elif refresh:
+        subprocess.run(["git", "-C", str(dest), "fetch", "--depth", "1", "origin", spec.ref or "HEAD"], check=True)
+        subprocess.run(["git", "-C", str(dest), "reset", "--hard", "FETCH_HEAD"], check=True)
     return dest

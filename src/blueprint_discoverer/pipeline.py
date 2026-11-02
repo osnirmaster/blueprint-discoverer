@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Collection
 from pathlib import Path
 
 from .calm.builder import build_architecture
@@ -29,15 +30,35 @@ class Pipeline:
         self.base_dir = base_dir
 
     # 1 ---------------------------------------------------------------------------------------
-    def scan(self) -> list[RepoScan]:
+    def scan(self, only: Collection[str] | None = None, refresh: bool = False,
+             prune: bool = True) -> list[RepoScan]:
+        """Scan the configured repositories and return the facts of the whole landscape.
+
+        `only` rescans just those repositories (by name) and reuses the stored facts of the others; a
+        repository without stored facts is scanned anyway. `prune` drops facts of repositories that are
+        no longer configured. `refresh` updates existing clones of remote repositories.
+        """
         carto = CodeCartographer(exclude=self.config.exclude)
+        unknown = set(only or ()) - {s.name for s in self.config.repos}
+        if unknown:
+            raise ValueError(f"unknown repositories: {', '.join(sorted(unknown))}")
         scans = []
         for spec in self.config.repos:
-            path = materialize_repo(spec, self.ws, self.base_dir)
+            facts = self.ws.facts_dir / f"{slugify(spec.name)}.json"
+            if only is not None and spec.name not in only and facts.exists():
+                scans.append(RepoScan.model_validate(read_json(facts)))
+                continue
+            path = materialize_repo(spec, self.ws, self.base_dir, refresh=refresh)
             log.info("scanning %s (%s)", spec.name, path)
             scan = carto.scan(spec.name, path)
-            write_json(self.ws.facts_dir / f"{slugify(spec.name)}.json", scan)
+            write_json(facts, scan)
             scans.append(scan)
+        if prune:
+            keep = {f"{slugify(s.name)}.json" for s in self.config.repos}
+            for stale in self.ws.facts_dir.glob("*.json"):
+                if stale.name not in keep:
+                    log.info("dropping facts of unlisted repository %s", stale.stem)
+                    stale.unlink()
         return scans
 
     def load_scans(self) -> list[RepoScan]:
@@ -67,6 +88,10 @@ class Pipeline:
         profiles = engine.infer_all([c for s in scans for c in s.components], links)
         for p in profiles:
             write_json(self.ws.semantic_dir / f"{p.component_id}.json", p)
+        keep = {f"{p.component_id}.json" for p in profiles}
+        for stale in self.ws.semantic_dir.glob("*.json"):
+            if stale.name not in keep:
+                stale.unlink()
         return profiles
 
     def load_profiles(self) -> list[SemanticProfile]:
@@ -105,8 +130,9 @@ class Pipeline:
                              unresolved=links.unresolved, overrides_dir=self.ws.root / "overrides").generate()
 
     # all -------------------------------------------------------------------------------------
-    def run(self, use_llm: bool | None = None, use_calm_cli: bool = False) -> ValidationReport:
-        scans = self.scan()
+    def run(self, use_llm: bool | None = None, use_calm_cli: bool = False,
+            only: Collection[str] | None = None, refresh: bool = False, prune: bool = True) -> ValidationReport:
+        scans = self.scan(only=only, refresh=refresh, prune=prune)
         links = self.link(scans)
         profiles = self.infer(scans, links, use_llm)
         doc = self.build_calm(scans, links, profiles)

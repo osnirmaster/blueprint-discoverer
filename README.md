@@ -43,7 +43,34 @@ cd examples/banking-landscape
 ../../.venv/bin/blueprint serve        # http://127.0.0.1:8765
 ```
 
-Seu próprio landscape: crie um `blueprint.yaml`:
+### Seu próprio landscape
+
+Há três formas de escolher o que escanear:
+
+**1. Uma pasta com vários repositórios**, sem precisar de configuração. Cada subpasta com `.git` vira
+um repositório; sem git, cada subpasta de primeiro nível com manifesto de build (`pom.xml`,
+`package.json`, `pyproject.toml`...).
+
+```bash
+blueprint discover ~/src/meu-banco --list     # só mostra o que encontrou
+blueprint discover ~/src/meu-banco            # escaneia tudo; resultado em ~/src/meu-banco/.blueprint
+blueprint discover ~/src/meu-banco --save     # idem, e grava/atualiza ~/src/meu-banco/blueprint.yaml
+```
+
+**2. Um repositório por vez**, que entra no landscape existente. Só ele é reescaneado; os fatos dos
+demais são reaproveitados.
+
+```bash
+blueprint repo ../contas                                  # pasta local
+blueprint repo https://github.com/minha-org/pix.git --ref main --save   # URL git; --save grava no blueprint.yaml
+blueprint run --only contas --only pagamentos             # reescaneia só esses, do blueprint.yaml
+```
+
+Com `blueprint.yaml`, o landscape é a lista dele mais o repositório informado (que só permanece com
+`--save`). Sem `blueprint.yaml`, os repositórios escaneados no mesmo workspace se acumulam; para
+recomeçar, use outro `--workspace`.
+
+**3. Um `blueprint.yaml`** com a lista completa — a forma recomendada para uso contínuo:
 
 ```yaml
 name: meu-banco-as-is
@@ -62,7 +89,9 @@ overrides:
 
 | Comando | Etapa |
 |---|---|
-| `blueprint run` | pipeline completo |
+| `blueprint run [--only <repo>] [--refresh]` | pipeline completo (`--only` reescaneia só esses repositórios; `--refresh` atualiza clones remotos) |
+| `blueprint discover <pasta> [--list] [--save]` | descobre os repositórios de uma pasta e roda o pipeline |
+| `blueprint repo <caminho\|url\|nome> [--save]` | escaneia um repositório e o integra ao landscape |
 | `blueprint scan` / `link` / `infer` / `calm` / `wiki` | etapas isoladas (cada uma lê o artefato anterior) |
 | `blueprint validate <arquivo.calm.json> [--calm-cli]` | valida qualquer documento CALM |
 | `blueprint bian list` / `bian import <csv>` | consulta/importa a paisagem BIAN |

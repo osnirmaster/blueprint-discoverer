@@ -25,6 +25,7 @@ repos ─► Cartographer Code (AST + config) ─► facts/*.json
 | Caminho | Responsabilidade |
 |---|---|
 | `src/blueprint_discoverer/cartographer/code/` | scanner, detecção de componentes, extratores AST (`extractors/java.py`, `typescript.py`, `python.py`), configuração (`config.py`) |
+| `src/blueprint_discoverer/discovery.py` | descoberta de repositórios numa pasta e edição do `blueprint.yaml` (`discover`, `repo`) |
 | `src/blueprint_discoverer/linker/resolver.py` | regras determinísticas de dependência (tabela em RULES §3) |
 | `src/blueprint_discoverer/semantic/` | paisagem BIAN, classificador determinístico, camada LLM (`llm.py`) e motor (`inference.py`) |
 | `src/blueprint_discoverer/calm/` | construção (`builder.py`) e validação (`validator.py`) do CALM |
@@ -42,6 +43,8 @@ repos ─► Cartographer Code (AST + config) ─► facts/*.json
 python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.11–3.14
 .venv/bin/pytest -q                                              # testes
 cd examples/banking-landscape && ../../.venv/bin/blueprint run   # pipeline completo
+.venv/bin/blueprint discover <pasta> [--list] [--save]           # descobre e escaneia todos os repos de uma pasta
+.venv/bin/blueprint repo <caminho|url|nome> [--save]             # (re)escaneia um repo, reaproveita os fatos dos outros
 .venv/bin/blueprint serve -c examples/banking-landscape/blueprint.yaml   # API + UI em :8765
 cd web && npm install && npm run dev                              # UI em modo dev (:5173, proxy p/ :8765)
 cd web && npm run typecheck && npm run build                      # checagem e build da UI
