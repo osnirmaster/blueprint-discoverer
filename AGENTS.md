@@ -74,6 +74,8 @@ cd web && npm run typecheck && npm run build                      # checagem e b
 
 ## Problemas conhecidos
 
-- **LadybugDB sob Rosetta:** com Python x86_64 rodando em Apple Silicon, abrir/criar o banco custa ~60 s de CPU
-  (uma vez por processo/base). Use um Python **arm64** nativo. O pipeline só reconstrói o grafo quando o
-  hash do CALM muda. Detalhes em `docs/adr/0003-graph-ladybugdb.md`.
+- **LadybugDB sob Rosetta:** com Python x86_64 rodando em Apple Silicon, criar ou abrir o banco custa ~60 s
+  de CPU; no arm64 nativo leva menos de 1 s. Use um Python **arm64** nativo
+  (`uv python install 3.13`). No macOS o wheel arm64 do ladybug precisa do OpenSSL 3 em
+  `/opt/homebrew/opt/openssl@3` (`brew install openssl@3` com Homebrew arm64). Medições e contorno sem
+  Homebrew arm64 em `docs/adr/0003-graph-ladybugdb.md`.

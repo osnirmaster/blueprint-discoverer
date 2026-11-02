@@ -25,10 +25,12 @@ repos ─► Cartographer Code (AST) ─► Linker (regras R-*) ─► Semântic
 
 ## Começando
 
-Requer Python 3.11–3.14 (**arm64 nativo em Apple Silicon** — veja [ADR 0003](docs/adr/0003-graph-ladybugdb.md)) e Node 20+.
+Requer Python 3.11–3.14 e Node 20+. Em Apple Silicon, use Python **arm64 nativo** e o OpenSSL 3 do
+Homebrew arm64 (`brew install openssl@3`): sob Rosetta o LadybugDB leva ~60 s para abrir o grafo,
+contra menos de 1 s no arm64 — veja [ADR 0003](docs/adr/0003-graph-ladybugdb.md).
 
 ```bash
-python3.13 -m venv .venv
+uv python install 3.13 && uv venv --python 3.13 --seed .venv   # ou python3.13 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 cd web && npm install && npm run build && cd ..
 ```
