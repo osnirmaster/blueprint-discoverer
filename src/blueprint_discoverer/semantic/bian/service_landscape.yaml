@@ -1,0 +1,363 @@
+# BIAN Service Landscape — curated subset aligned to v8.0 naming.
+# Source of truth is the official BIAN landscape (https://bian.org/servicelandscape-8-0/index.html).
+# Replace/extend with `blueprint bian import <csv|yaml>` from an official export; ids are stable slugs of the name.
+# keywords: EN + PT-BR terms observed in code identifiers, endpoint paths, topics, tables and READMEs.
+version: "8.0-curated"
+service_domains:
+  # ---------------- Operations and Execution / Loans and Deposits
+  - name: Current Account
+    business_area: Operations and Execution
+    business_domain: Loans and Deposits
+    functional_pattern: Fulfill
+    description: Orchestrates a checking/current account product, including balance, overdraft, blocks and statements.
+    keywords: [current account, checking account, conta corrente, account balance, overdraft, cheque especial, account block, bloqueio conta, demand deposit, saldo]
+  - name: Savings Account
+    business_area: Operations and Execution
+    business_domain: Loans and Deposits
+    functional_pattern: Fulfill
+    description: Fulfils savings account arrangements and interest accrual.
+    keywords: [savings account, savings, poupanca, conta poupanca, interest accrual, rendimento]
+  - name: Term Deposit
+    business_area: Operations and Execution
+    business_domain: Loans and Deposits
+    functional_pattern: Fulfill
+    description: Fixed-term deposit products (CDB, time deposits).
+    keywords: [term deposit, time deposit, fixed deposit, cdb, deposito a prazo, maturity date]
+  - name: Consumer Loan
+    business_area: Operations and Execution
+    business_domain: Loans and Deposits
+    functional_pattern: Fulfill
+    description: "Fulfils retail lending facilities: disbursement, installments, repayment."
+    keywords: [consumer loan, personal loan, loan, emprestimo, credito pessoal, installment, parcela, repayment, disbursement, amortization, amortizacao]
+  - name: Mortgage Loan
+    business_area: Operations and Execution
+    business_domain: Loans and Deposits
+    functional_pattern: Fulfill
+    description: Real estate secured lending.
+    keywords: [mortgage, home loan, financiamento imobiliario, real estate loan, property loan]
+  - name: Corporate Loan
+    business_area: Operations and Execution
+    business_domain: Loans and Deposits
+    functional_pattern: Fulfill
+    description: Lending facilities for corporate customers.
+    keywords: [corporate loan, business loan, commercial loan, capital de giro, working capital]
+  - name: Credit Facility
+    business_area: Operations and Execution
+    business_domain: Loans and Deposits
+    functional_pattern: Fulfill
+    description: Revolving and committed credit lines.
+    keywords: [credit facility, credit line, linha de credito, revolving credit, limite de credito]
+  # ---------------- Operations and Execution / Cards
+  - name: Credit Card
+    business_area: Operations and Execution
+    business_domain: Cards
+    functional_pattern: Fulfill
+    description: "Credit card product fulfilment: statements, limits, billing cycle."
+    keywords: [credit card, cartao de credito, card statement, fatura, billing cycle, card limit]
+  - name: Card Authorization
+    business_area: Operations and Execution
+    business_domain: Cards
+    functional_pattern: Transact
+    description: Authorises card transactions against limits and rules.
+    keywords: [card authorization, authorization, autorizacao, card transaction, iso8583, issuer authorization]
+  - name: Card Transaction Switch
+    business_area: Operations and Execution
+    business_domain: Cards
+    functional_pattern: Transact
+    description: Routes card transactions between networks and processors.
+    keywords: [card switch, transaction switch, card network, visa, mastercard, elo, bandeira]
+  - name: Merchant Acquiring Facility
+    business_area: Operations and Execution
+    business_domain: Cards
+    functional_pattern: Fulfill
+    description: Acquiring services for merchants accepting card payments.
+    keywords: [merchant acquiring, acquirer, credenciadora, merchant, lojista, pos terminal, maquininha]
+  - name: Issued Device Administration
+    business_area: Operations and Execution
+    business_domain: Cards
+    functional_pattern: Administer
+    description: Lifecycle of issued cards and devices (issue, activate, block, replace).
+    keywords: [card issuance, card activation, card block, emissao cartao, issued device, plastic, token device]
+  # ---------------- Operations and Execution / Payments
+  - name: Payment Initiation
+    business_area: Operations and Execution
+    business_domain: Payments
+    functional_pattern: Transact
+    description: Captures and validates customer payment instructions from channels.
+    keywords: [payment initiation, initiate payment, iniciacao pagamento, open banking payment, transfer request, transferencia]
+  - name: Payment Order
+    business_area: Operations and Execution
+    business_domain: Payments
+    functional_pattern: Process
+    description: "Processes payment orders: funds check, routing and dispatch for execution."
+    keywords: [payment order, payment orders, ordem de pagamento, payment, pagamento, transfer, transfers, pix, ted, doc, boleto, bill payment]
+  - name: Payment Execution
+    business_area: Operations and Execution
+    business_domain: Payments
+    functional_pattern: Process
+    description: Executes payments over clearing/settlement rails.
+    keywords: [payment execution, settlement, liquidacao, clearing, compensacao, spi, str, swift, sepa, payment rail]
+  - name: Direct Debit
+    business_area: Operations and Execution
+    business_domain: Payments
+    functional_pattern: Transact
+    description: Executes direct debit collections.
+    keywords: [direct debit, debito automatico, debit collection]
+  - name: Direct Debit Mandate
+    business_area: Operations and Execution
+    business_domain: Payments
+    functional_pattern: Agree Terms
+    description: Maintains direct debit mandates/authorisations.
+    keywords: [mandate, direct debit mandate, autorizacao debito, pix automatico]
+  - name: Standing Order
+    business_area: Operations and Execution
+    business_domain: Payments
+    functional_pattern: Fulfill
+    description: Recurring scheduled payments.
+    keywords: [standing order, recurring payment, scheduled payment, agendamento, pagamento recorrente]
+  - name: Cheque Processing
+    business_area: Operations and Execution
+    business_domain: Payments
+    functional_pattern: Process
+    description: Cheque deposit, clearing and return handling.
+    keywords: [cheque, check deposit, cheque clearing]
+  # ---------------- Operations and Execution / Account Management & operational services
+  - name: Position Keeping
+    business_area: Operations and Execution
+    business_domain: Account Management
+    functional_pattern: Track
+    description: Financial transaction log and position (ledger entries) for a product arrangement.
+    keywords: [position keeping, ledger, lancamento, posting, journal entry, transaction log, extrato, statement entries]
+  - name: Account Reconciliation
+    business_area: Operations and Execution
+    business_domain: Account Management
+    functional_pattern: Process
+    description: Reconciles account positions with external/internal records.
+    keywords: [reconciliation, conciliacao, reconcile, break analysis]
+  - name: Collections
+    business_area: Operations and Execution
+    business_domain: Account Management
+    functional_pattern: Process
+    description: Recovery of overdue amounts.
+    keywords: [collections, cobranca, overdue, delinquency, inadimplencia, dunning]
+  - name: Document Services
+    business_area: Operations and Execution
+    business_domain: Operational Services
+    functional_pattern: Process
+    description: Document capture, generation and storage services.
+    keywords: [document, documento, ocr, contract document, pdf generation, document storage]
+  - name: Correspondence
+    business_area: Operations and Execution
+    business_domain: Operational Services
+    functional_pattern: Process
+    description: Outbound customer correspondence and notifications.
+    keywords: [correspondence, notification, notificacao, email, sms, push notification, mailing]
+  # ---------------- Operations and Execution / Investment Management
+  - name: Investment Portfolio Management
+    business_area: Operations and Execution
+    business_domain: Investment Management
+    functional_pattern: Manage
+    description: Manages customer investment portfolios.
+    keywords: [investment portfolio, portfolio, carteira, investimento, asset allocation, fundos]
+  - name: Securities Position Keeping
+    business_area: Operations and Execution
+    business_domain: Investment Management
+    functional_pattern: Track
+    description: Securities holdings and custody positions.
+    keywords: [securities position, custody, custodia, holdings, securities]
+  - name: Trade Confirmation Matching
+    business_area: Operations and Execution
+    business_domain: Market Operations
+    functional_pattern: Process
+    description: Matches trade confirmations with counterparties.
+    keywords: [trade confirmation, trade matching, boleta, trade settlement]
+  # ---------------- Sales and Service
+  - name: Customer Relationship Management
+    business_area: Sales and Service
+    business_domain: Customer Management
+    functional_pattern: Manage
+    description: Maintains the overall customer relationship, contacts and plans.
+    keywords: [customer relationship, crm, relacionamento, relationship manager, gerente de relacionamento]
+  - name: Customer Agreement
+    business_area: Sales and Service
+    business_domain: Customer Management
+    functional_pattern: Agree Terms
+    description: Master legal agreement between bank and customer.
+    keywords: [customer agreement, master agreement, terms and conditions, contrato cliente, consent, consentimento]
+  - name: Customer Position
+    business_area: Sales and Service
+    business_domain: Customer Management
+    functional_pattern: Analyze
+    description: Consolidated view of a customer's financial position across products.
+    keywords: [customer position, consolidated position, posicao consolidada, dashboard, customer overview, visao 360]
+  - name: Customer Product and Service Eligibility
+    business_area: Sales and Service
+    business_domain: Customer Management
+    functional_pattern: Assess
+    description: Determines product eligibility for a customer.
+    keywords: [eligibility, elegibilidade, pre-approved, pre aprovado, product eligibility]
+  - name: Customer Offer
+    business_area: Sales and Service
+    business_domain: Sales
+    functional_pattern: Process
+    description: Orchestrates a product offer/origination to a customer.
+    keywords: [customer offer, offer, oferta, origination, onboarding product, proposal, proposta]
+  - name: Product Directory
+    business_area: Sales and Service
+    business_domain: Sales
+    functional_pattern: Catalog
+    description: Catalogue of products and services with their features.
+    keywords: [product directory, product catalog, catalogo produtos, product catalogue, tariff, tarifa]
+  - name: Customer Campaign Execution
+    business_area: Sales and Service
+    business_domain: Marketing
+    functional_pattern: Operate
+    description: Runs marketing campaigns towards customers.
+    keywords: [campaign, campanha, marketing campaign, promotion, promocao]
+  - name: Customer Case Management
+    business_area: Sales and Service
+    business_domain: Servicing
+    functional_pattern: Manage
+    description: Handles customer cases, complaints and service requests.
+    keywords: [case management, complaint, reclamacao, service request, ticket, chamado, ouvidoria]
+  - name: Party Authentication
+    business_area: Sales and Service
+    business_domain: Cross Channel
+    functional_pattern: Assess
+    description: Authenticates parties accessing bank channels.
+    keywords: [authentication, autenticacao, login, oauth, mfa, otp, token, biometria, biometrics]
+  - name: Customer Access Entitlement
+    business_area: Sales and Service
+    business_domain: Cross Channel
+    functional_pattern: Agree Terms
+    description: Channel access rights and entitlements.
+    keywords: [entitlement, permission, permissao, access rights, authorization profile, perfil de acesso]
+  - name: Session Dialogue
+    business_area: Sales and Service
+    business_domain: Cross Channel
+    functional_pattern: Operate
+    description: Manages a customer's interactive session across channel touchpoints (BFF/portal orchestration).
+    keywords: [session, sessao, bff, backend for frontend, portal, digital banking, internet banking, mobile banking, channel]
+  - name: Channel Activity History
+    business_area: Sales and Service
+    business_domain: Cross Channel
+    functional_pattern: Track
+    description: Records customer activity across channels.
+    keywords: [channel activity, activity history, audit trail, historico de acesso, clickstream]
+  - name: Contact Center Operations
+    business_area: Sales and Service
+    business_domain: Channel Specific
+    functional_pattern: Operate
+    description: Contact centre and call routing operations.
+    keywords: [contact center, call center, ura, ivr, atendimento telefonico]
+  - name: ATM Network Operations
+    business_area: Sales and Service
+    business_domain: Channel Specific
+    functional_pattern: Operate
+    description: ATM fleet operations.
+    keywords: [atm, caixa eletronico, cash withdrawal, saque]
+  # ---------------- Reference Data
+  - name: Party Reference Data Directory
+    business_area: Reference Data
+    business_domain: Party
+    functional_pattern: Catalog
+    description: Reference details about parties (customers, counterparties) — identity, addresses, contacts.
+    keywords: [party, customer, customers, cliente, clientes, customer reference, party reference, cadastro, cpf, cnpj, address, endereco]
+  - name: Party Lifecycle Management
+    business_area: Reference Data
+    business_domain: Party
+    functional_pattern: Manage
+    description: Onboarding and lifecycle states of a party, including KYC verification.
+    keywords: [onboarding, onboard, party lifecycle, kyc, know your customer, customer onboarding, abertura de cadastro, due diligence]
+  - name: Legal Entity Directory
+    business_area: Reference Data
+    business_domain: Party
+    functional_pattern: Catalog
+    description: Legal entities and corporate hierarchies.
+    keywords: [legal entity, lei, corporate hierarchy, grupo economico, company registry]
+  - name: Market Data Switch Operation
+    business_area: Reference Data
+    business_domain: Market Data
+    functional_pattern: Operate
+    description: Distributes market data feeds.
+    keywords: [market data, quotes, cotacao, price feed, bloomberg, refinitiv, b3 feed]
+  - name: Currency Exchange
+    business_area: Operations and Execution
+    business_domain: Trade Banking
+    functional_pattern: Transact
+    description: Foreign exchange conversion services.
+    keywords: [currency exchange, fx, cambio, exchange rate, taxa de cambio, foreign exchange]
+  # ---------------- Risk and Compliance
+  - name: Fraud Detection
+    business_area: Risk and Compliance
+    business_domain: Regulations and Compliance
+    functional_pattern: Assess
+    description: Detects potentially fraudulent activity in transactions and behaviour.
+    keywords: [fraud, fraude, fraud detection, anomaly, anomaly score, suspicious, fraud alert, fraud alerts, antifraude, risk score]
+  - name: Fraud Resolution
+    business_area: Risk and Compliance
+    business_domain: Regulations and Compliance
+    functional_pattern: Process
+    description: Investigates and resolves fraud cases.
+    keywords: [fraud case, fraud cases, fraud investigation, chargeback, contestacao, dispute]
+  - name: Regulatory Compliance
+    business_area: Risk and Compliance
+    business_domain: Regulations and Compliance
+    functional_pattern: Assess
+    description: Assesses activity against regulatory requirements (AML, sanctions).
+    keywords: [compliance, aml, anti money laundering, pld, sanctions, sancoes, coaf, watchlist, pep]
+  - name: Regulatory Reporting
+    business_area: Risk and Compliance
+    business_domain: Regulations and Compliance
+    functional_pattern: Process
+    description: Produces regulatory reports for supervisors.
+    keywords: [regulatory reporting, bacen, banco central, scr, cadoc, regulatory report, relatorio regulatorio]
+  - name: Customer Credit Rating
+    business_area: Risk and Compliance
+    business_domain: Models
+    functional_pattern: Analyze
+    description: Assesses and maintains customer credit ratings/scores.
+    keywords: [credit rating, credit score, score de credito, rating, bureau, serasa, credit assessment]
+  - name: Credit Risk Models
+    business_area: Risk and Compliance
+    business_domain: Models
+    functional_pattern: Design
+    description: Credit risk models (PD/LGD/EAD).
+    keywords: [credit risk, pd, lgd, ead, risk model, provisioning, provisao]
+  - name: Limit and Exposure Management
+    business_area: Risk and Compliance
+    business_domain: Bank Portfolio and Treasury
+    functional_pattern: Monitor
+    description: Monitors limits and exposures against counterparties.
+    keywords: [limit, exposure, exposicao, limit management, counterparty limit]
+  - name: Asset and Liability Management
+    business_area: Risk and Compliance
+    business_domain: Bank Portfolio and Treasury
+    functional_pattern: Manage
+    description: Balance sheet, liquidity and interest rate risk management.
+    keywords: [alm, liquidity, liquidez, treasury, tesouraria, funding, interest rate risk]
+  # ---------------- Business Support
+  - name: Financial Accounting
+    business_area: Business Support
+    business_domain: Finance
+    functional_pattern: Track
+    description: General ledger and financial accounting.
+    keywords: [general ledger, gl, accounting, contabilidade, contabil, cosif, financial accounting]
+  - name: Product Design
+    business_area: Business Support
+    business_domain: Business Direction
+    functional_pattern: Design
+    description: Designs product specifications and features.
+    keywords: [product design, product specification, product feature, pricing design]
+  - name: Information Provider Operation
+    business_area: Business Support
+    business_domain: Knowledge and IP Management
+    functional_pattern: Operate
+    description: Operation of external information provider integrations (bureaus, registries).
+    keywords: [information provider, external provider, receita federal, bureau integration, data provider]
+  - name: Systems Operations
+    business_area: Business Support
+    business_domain: IT Systems
+    functional_pattern: Operate
+    description: Technical platform services without direct business semantics (gateways, config, logging).
+    keywords: [gateway, api gateway, config server, logging, monitoring, health, healthcheck, metrics, service discovery, eureka]

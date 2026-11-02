@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: accounts-service
+  datasource:
+    url: jdbc:postgresql://accounts-db:5432/accounts
+  kafka:
+    bootstrap-servers: kafka:9092
+server:
+  port: 8080

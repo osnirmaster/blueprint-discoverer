@@ -1,0 +1,4 @@
+[project]
+name = "payments-service"
+version = "1.4.0"
+dependencies = ["fastapi", "httpx", "kafka-python", "sqlalchemy"]
