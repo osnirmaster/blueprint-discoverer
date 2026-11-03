@@ -1,5 +1,4 @@
 import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import FormField from "@cloudscape-design/components/form-field";
@@ -11,38 +10,25 @@ import Multiselect from "@cloudscape-design/components/multiselect";
 import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import Slider from "@cloudscape-design/components/slider";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import cytoscape, { Core } from "cytoscape";
-import dagre from "cytoscape-dagre";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { api, GraphEdge, GraphNode } from "../api";
+import Toggle from "@cloudscape-design/components/toggle";
+import { useMemo, useState } from "react";
+import { api, GraphNode } from "../api";
+import DependencyCanvas, { CATEGORIES, Direction, Selection } from "../components/DependencyCanvas";
 import { Confidence, EvidenceList, Loadable, NodeType } from "../components/common";
 import { useAsync } from "../hooks";
 
-cytoscape.use(dagre);
-
-// Cloudscape visual palette (data-vis categorical colors)
-const COLORS = { Application: "#688ae8", DataStore: "#2ea597", Topic: "#c33d69", ExternalSystem: "#8456ce" } as const;
-const SHAPES = { Application: "round-rectangle", DataStore: "barrel", Topic: "tag", ExternalSystem: "hexagon" } as const;
-const TYPES = Object.keys(COLORS) as GraphNode["type"][];
-
-const EDGE_LABEL: Record<string, string> = { grpc: "gRPC", graphql: "GraphQL", soap: "SOAP" };
-
-function nodeLabel(n: GraphNode) {
-  if (n.type === "Application" && n.service_domain) return `${n.name}\n${n.service_domain}`;
-  if (n.technology) return `${n.name}\n${n.technology}`;
-  return n.name;
-}
-
-type Selection = { kind: "node"; node: GraphNode } | { kind: "edge"; edge: GraphEdge } | null;
+const TYPES = Object.keys(CATEGORIES) as GraphNode["type"][];
+const KIND_LABEL: Record<string, string> = {
+  http: "REST", grpc: "gRPC", graphql: "GraphQL", soap: "SOAP", async: "Assíncrona", data: "Dados", external: "Externa",
+};
 
 export default function DependencyGraphPage() {
   const { data, loading, error } = useAsync(api.graph);
-  const ref = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<Core>();
   const [types, setTypes] = useState<string[]>(TYPES);
   const [domains, setDomains] = useState<string[]>([]);
   const [minConf, setMinConf] = useState(0);
-  const [layout, setLayout] = useState("dagre");
+  const [direction, setDirection] = useState<Direction>("LR");
+  const [grouped, setGrouped] = useState(true);
   const [selected, setSelected] = useState<Selection>(null);
 
   const allDomains = useMemo(
@@ -50,82 +36,35 @@ export default function DependencyGraphPage() {
     [data],
   );
 
-  const elements = useMemo(() => {
-    if (!data) return [];
+  const view = useMemo(() => {
+    if (!data) return { nodes: [], edges: [] };
     const appDomain = (n: GraphNode) => !domains.length || n.type !== "Application" || domains.includes(n.business_domain ?? "");
     const nodes = data.nodes.filter((n) => types.includes(n.type) && appDomain(n));
     const ids = new Set(nodes.map((n) => n.id));
     const edges = data.edges.filter((e) => ids.has(e.source) && ids.has(e.target) && e.confidence >= minConf);
-    // drop isolated non-application nodes created by filtering (e.g. a topic whose apps were filtered out)
+    // drop isolated non-application nodes created by filtering (e.g. a queue whose apps were filtered out)
     const linked = new Set(edges.flatMap((e) => [e.source, e.target]));
-    return [
-      ...nodes
-        .filter((n) => n.type === "Application" || linked.has(n.id))
-        .map((n) => ({ data: { ...n, label: nodeLabel(n) } })),
-      ...edges.map((e) => ({ data: { ...e, label: EDGE_LABEL[e.kind] ?? e.protocol } })),
-    ];
+    return { nodes: nodes.filter((n) => n.type === "Application" || linked.has(n.id)), edges };
   }, [data, types, domains, minConf]);
 
-  useEffect(() => {
-    if (!ref.current || !data) return;
-    const cy = cytoscape({
-      container: ref.current,
-      elements,
-      wheelSensitivity: 0.2,
-      style: [
-        {
-          selector: "node",
-          style: {
-            label: "data(label)", "text-wrap": "wrap", "text-valign": "center", "text-halign": "center",
-            "font-size": 10, color: "#fff", "text-outline-width": 0, width: 150, height: 46,
-            "background-color": (n: any) => COLORS[n.data("type") as keyof typeof COLORS],
-            shape: (n: any) => SHAPES[n.data("type") as keyof typeof SHAPES],
-            "border-width": (n: any) => (n.data("review") ? 3 : 0), "border-color": "#ff9900",
-          } as any,
-        },
-        {
-          selector: "edge",
-          style: {
-            width: 1.6, "curve-style": "bezier", "target-arrow-shape": "triangle", "arrow-scale": 0.9,
-            label: "data(label)", "font-size": 8, "text-background-opacity": 1, "text-background-color": "#ffffff",
-            "line-color": "#8d99a8", "target-arrow-color": "#8d99a8",
-            "line-style": (e: any) => (e.data("confidence") < 0.8 ? "dashed" : e.data("kind") === "async" ? "dotted" : "solid"),
-          } as any,
-        },
-        { selector: ".faded", style: { opacity: 0.15 } },
-        { selector: ":selected", style: { "border-width": 4, "border-color": "#0972d3", "line-color": "#0972d3", "target-arrow-color": "#0972d3" } },
-      ],
-      layout: layout === "dagre"
-        ? ({ name: "dagre", rankDir: "LR", nodeSep: 30, rankSep: 90 } as any)
-        : { name: "cose", animate: false, nodeRepulsion: () => 9000 },
-    });
-    cy.on("tap", "node", (evt) => {
-      const n = evt.target;
-      cy.elements().addClass("faded");
-      n.closedNeighborhood().removeClass("faded");
-      setSelected({ kind: "node", node: n.data() as GraphNode });
-    });
-    cy.on("tap", "edge", (evt) => setSelected({ kind: "edge", edge: evt.target.data() as GraphEdge }));
-    cy.on("tap", (evt) => {
-      if (evt.target === cy) {
-        cy.elements().removeClass("faded");
-        setSelected(null);
-      }
-    });
-    cyRef.current = cy;
-    return () => cy.destroy();
-  }, [elements, layout, data]);
+  const names = useMemo(() => new Map((data?.nodes ?? []).map((n) => [n.id, n.name])), [data]);
 
   return (
-    <ContentLayout header={<Header variant="h1" description="Projeção do manifesto CALM no grafo LadybugDB. Clique num nó para destacar sua vizinhança; arestas tracejadas têm confiança < 0.8, pontilhadas são assíncronas.">Mapa de dependências</Header>}>
+    <ContentLayout
+      header={
+        <Header variant="h1" description="Projeção do manifesto CALM no grafo LadybugDB, do downstream (quem chama) para o upstream (quem provê). Clique numa caixa para destacar suas dependências; linhas tracejadas têm confiança < 0.8 e pontilhadas são assíncronas.">
+          Mapa de dependências
+        </Header>
+      }
+    >
       <Loadable loading={loading} error={error}>
         <SpaceBetween size="m">
           <Container>
-            <Grid gridDefinition={[{ colspan: 4 }, { colspan: 4 }, { colspan: 2 }, { colspan: 2 }]}>
+            <Grid gridDefinition={[{ colspan: { default: 12, m: 4 } }, { colspan: { default: 12, m: 3 } }, { colspan: { default: 6, m: 2 } }, { colspan: { default: 6, m: 3 } }]}>
               <FormField label="Tipos de nó">
                 <Multiselect
-                  selectedOptions={types.map((t) => ({ value: t, label: t }))}
-                  options={TYPES.map((t) => ({ value: t, label: t }))}
+                  selectedOptions={types.map((t) => ({ value: t, label: CATEGORIES[t as GraphNode["type"]].label }))}
+                  options={TYPES.map((t) => ({ value: t, label: CATEGORIES[t].label }))}
                   onChange={({ detail }) => setTypes(detail.selectedOptions.map((o) => o.value!))}
                   placeholder="Tipos"
                 />
@@ -141,33 +80,43 @@ export default function DependencyGraphPage() {
               <FormField label={`Confiança mínima: ${minConf.toFixed(2)}`}>
                 <Slider value={minConf} min={0} max={1} step={0.05} onChange={({ detail }) => setMinConf(detail.value)} />
               </FormField>
-              <FormField label="Layout">
-                <SegmentedControl
-                  selectedId={layout}
-                  options={[{ id: "dagre", text: "Fluxo" }, { id: "cose", text: "Força" }]}
-                  onChange={({ detail }) => setLayout(detail.selectedId)}
-                />
+              <FormField label="Disposição">
+                <SpaceBetween size="xs">
+                  <SegmentedControl
+                    selectedId={direction}
+                    options={[{ id: "LR", text: "Horizontal" }, { id: "TB", text: "Vertical" }]}
+                    onChange={({ detail }) => setDirection(detail.selectedId as Direction)}
+                  />
+                  <Toggle checked={grouped} onChange={({ detail }) => setGrouped(detail.checked)}>Agrupar por domínio BIAN</Toggle>
+                </SpaceBetween>
               </FormField>
             </Grid>
           </Container>
           <Grid gridDefinition={[{ colspan: { default: 12, l: 9 } }, { colspan: { default: 12, l: 3 } }]}>
             <Container
-              header={<Header variant="h2" actions={<Button iconName="zoom-to-fit" onClick={() => cyRef.current?.fit(undefined, 30)}>Ajustar</Button>}>Grafo</Header>}
+              header={<Header variant="h2" counter={`(${view.nodes.length} nós · ${view.edges.length} dependências)`}>Canvas</Header>}
               disableContentPaddings
+              footer={
+                <Box fontSize="body-s" color="text-body-secondary">
+                  {TYPES.map((t) => (
+                    <span key={t} style={{ marginRight: 16, whiteSpace: "nowrap" }}>
+                      <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: CATEGORIES[t].color, marginRight: 6 }} />
+                      {CATEGORIES[t].label}
+                    </span>
+                  ))}
+                  <span>· borda âmbar = classificação BIAN a revisar</span>
+                </Box>
+              }
             >
-              <div ref={ref} style={{ height: "68vh", width: "100%" }} />
-              <Box padding="s">
-                {TYPES.map((t) => (
-                  <span key={t} style={{ marginRight: 16 }}>
-                    <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: COLORS[t], marginRight: 6 }} />
-                    {t}
-                  </span>
-                ))}
-                <span>· borda laranja = revisão pendente</span>
-              </Box>
+              <div style={{ height: "70vh", width: "100%" }}>
+                {data && (
+                  <DependencyCanvas nodes={view.nodes} edges={view.edges} direction={direction} grouped={grouped}
+                    selection={selected} onSelect={setSelected} />
+                )}
+              </div>
             </Container>
             <Container header={<Header variant="h2">Detalhes</Header>}>
-              {!selected && <Box color="text-status-inactive">Selecione um nó ou aresta.</Box>}
+              {!selected && <Box color="text-status-inactive">Selecione uma caixa ou uma dependência.</Box>}
               {selected?.kind === "node" && (
                 <KeyValuePairs
                   columns={1}
@@ -179,11 +128,15 @@ export default function DependencyGraphPage() {
                     },
                     { label: "Tipo", value: <NodeType type={selected.node.type} /> },
                     ...(selected.node.type === "Application" ? [
+                      { label: "Linguagens", value: selected.node.languages?.join(", ") || "—" },
+                      { label: "Repositório", value: selected.node.repo || "—" },
                       { label: "Service Domain", value: selected.node.service_domain ?? "—" },
                       { label: "Business Domain", value: selected.node.business_domain ?? "—" },
                       { label: "Business Area", value: selected.node.business_area ?? "—" },
                       { label: "Confiança", value: <Confidence value={selected.node.confidence} review={selected.node.review} /> },
-                    ] : []),
+                    ] : [
+                      { label: "Tecnologia", value: selected.node.technology || "—" },
+                    ]),
                   ]}
                 />
               )}
@@ -191,8 +144,9 @@ export default function DependencyGraphPage() {
                 <KeyValuePairs
                   columns={1}
                   items={[
-                    { label: "De → Para", value: `${selected.edge.source} → ${selected.edge.target}` },
-                    { label: "Tipo / protocolo", value: `${selected.edge.kind} / ${selected.edge.protocol}` },
+                    { label: "Downstream (chama)", value: names.get(selected.edge.source) ?? selected.edge.source },
+                    { label: "Upstream (provê)", value: names.get(selected.edge.target) ?? selected.edge.target },
+                    { label: "Dependência / protocolo", value: `${KIND_LABEL[selected.edge.kind] ?? selected.edge.kind} / ${selected.edge.protocol}` },
                     { label: "Detalhe", value: selected.edge.description },
                     { label: "Confiança", value: <Confidence value={selected.edge.confidence} /> },
                     { label: "Regra", value: <Box variant="code">{selected.edge.rule}</Box> },

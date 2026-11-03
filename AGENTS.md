@@ -35,7 +35,7 @@ repos ─► Cartographer Code (AST + config) ─► facts/*.json
 | `src/blueprint_discoverer/wiki/generator.py` | wiki Markdown/Mermaid |
 | `src/blueprint_discoverer/api/app.py` | API REST para a UI |
 | `src/blueprint_discoverer/api/console.py` | console de fontes: navegação de pastas, descoberta e scans em segundo plano |
-| `web/` | UI React + Cloudscape (cytoscape para o grafo) |
+| `web/` | UI React + Cloudscape; mapa de dependências em React Flow + dagre (`components/DependencyCanvas.tsx`) com tokens do Cloudscape |
 | `schemas/calm/1.0/` | meta-schemas CALM vendorizados (validação offline) |
 | `examples/banking-landscape/` | 5 repositórios de exemplo (Java/Spring, Python/FastAPI, TS/Nest/Express) |
 | `.claude/skills/` | skills que guiam agentes nas tarefas recorrentes |

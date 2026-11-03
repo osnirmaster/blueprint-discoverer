@@ -12,7 +12,7 @@
 | CALM | builder + validador (schema, referências, perfil) | `architecture.calm.json`, `validation.json` | sim |
 | Grafo | LadybugDB (projeção do CALM) | `graph.lbdb` | sim |
 | Wiki | Markdown + Mermaid | `wiki/` | sim |
-| UI | React + Cloudscape + cytoscape | `web/dist` | — |
+| UI | React + Cloudscape + React Flow (canvas no estilo do Infrastructure Composer) | `web/dist` | — |
 
 ## Modelo do grafo
 

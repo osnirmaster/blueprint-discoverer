@@ -79,6 +79,9 @@ export interface GraphNode {
   review?: boolean;
   technology?: string;
   kind?: string;
+  languages?: string[];
+  node_type?: string;
+  repo?: string;
 }
 
 export interface GraphEdge {

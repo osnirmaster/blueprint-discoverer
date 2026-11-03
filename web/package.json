@@ -13,9 +13,10 @@
     "@cloudscape-design/code-view": "^3.0.191",
     "@cloudscape-design/collection-hooks": "^1.0.110",
     "@cloudscape-design/components": "^3.0.1407",
+    "@cloudscape-design/design-tokens": "^3.0.117",
     "@cloudscape-design/global-styles": "^1.0.71",
-    "cytoscape": "^3.34.4",
-    "cytoscape-dagre": "^4.0.1",
+    "@dagrejs/dagre": "^1.1.8",
+    "@xyflow/react": "^12.12.1",
     "mermaid": "^12.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -24,8 +25,6 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "@types/cytoscape": "^3.31.0",
-    "@types/cytoscape-dagre": "^2.3.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^5.0.0",

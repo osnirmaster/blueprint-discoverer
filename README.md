@@ -122,7 +122,7 @@ docker-compose, Kubernetes `Service`, OpenAPI, `.proto`, `*.graphql(s)`, `*.wsdl
 ## UI (Cloudscape)
 
 Visão geral · Aplicações (tabela filtrável) · Detalhe da aplicação (BIAN, APIs, dependências, impacto, nó CALM) ·
-Mapa de dependências (cytoscape, filtros por tipo/domínio/confiança) · Mapa BIAN (cobertura) ·
+Mapa de dependências (canvas React Flow no estilo do Infrastructure Composer, com caixas por serviço, grupos por domínio BIAN, minimapa e filtros por tipo/domínio/confiança) · Mapa BIAN (cobertura) ·
 Manifesto CALM (validação + JSON) · Wiki · Explorador Cypher · **Fontes e scans**.
 
 A página **Fontes e scans** é a console de scan: lista os repositórios do landscape e permite reescanear só os

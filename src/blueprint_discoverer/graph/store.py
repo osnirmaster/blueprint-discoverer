@@ -171,11 +171,14 @@ class GraphStore:
     def graph_view(self) -> dict:
         nodes = []
         for label in ("Application", "DataStore", "Topic", "ExternalSystem"):
-            extra = ", n.service_domain_id AS sd, n.confidence AS confidence, n.review_required AS review" \
+            extra = ", n.service_domain_id AS sd, n.confidence AS confidence, n.review_required AS review, " \
+                    "n.languages AS languages, n.node_type AS node_type, n.repo AS repo" \
                 if label == "Application" else ", n.technology AS technology, n.kind AS kind" \
                 if label in ("DataStore", "Topic") else ""
             for row in self.q(f"MATCH (n:{label}) RETURN n.id AS id, n.name AS name{extra} ORDER BY n.id"):
                 row["type"] = label
+                if "languages" in row:
+                    row["languages"] = json.loads(row["languages"] or "[]")
                 nodes.append(row)
         sds = {r["id"]: r for r in self.q(
             "MATCH (s:ServiceDomain)-[:IN_BUSINESS_DOMAIN]->(d:BusinessDomain)-[:IN_BUSINESS_AREA]->(a:BusinessArea) "
