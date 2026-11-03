@@ -22,13 +22,24 @@ Mudou uma regra? Atualize `PROMPT_VERSION` em `llm.py` (invalida o cache) e adic
 
 ## §2 Fatos de código (Cartographer Code)
 
-- Extratores registram apenas o que a sintaxe prova: anotações/decorators de rota, chamadas de cliente
-  HTTP com URL resolvível, produtores/consumidores de mensageria, entidades ORM, DSNs/JDBC.
+- Linguagens: Java, Kotlin, C#/.NET, Go, TypeScript/JavaScript (tree-sitter) e Python (`ast`).
+- Extratores registram apenas o que a sintaxe prova: rotas (REST, gRPC, GraphQL, SOAP), clientes
+  (HTTP, gRPC, GraphQL, SOAP) com destino resolvível, produtores/consumidores de mensageria (Kafka, RabbitMQ,
+  JMS, SQS, SNS, Kinesis), entidades ORM, DSNs/JDBC e recursos AWS nomeados em chamadas do SDK
+  (DynamoDB, S3, SQS, SNS, Kinesis).
+- Contratos (`.proto`, SDL GraphQL, WSDL) descrevem interfaces; **quem serve ou consome é decidido pelo
+  código**. Ex.: um `.proto` só vira endpoint num componente que implementa o serviço; um SDL só vira
+  endpoint em componente com biblioteca de servidor GraphQL; um WSDL sem implementação vira dependência SOAP.
+- Infraestrutura como código (Terraform, CloudFormation/SAM) declara recursos AWS e sua fiação
+  (assinaturas SNS→SQS/Lambda, fontes de evento, variáveis de ambiente de funções). Repositórios só de IaC
+  não viram aplicações.
 - Constantes são propagadas apenas quando a atribuição é literal ou `getenv("X", "default")` /
   `process.env.X ?? "default"`. O valor padrão do código é usado; variáveis de ambiente reais não.
-- Testes (`/test/`, `*.spec.*`, `test_*`) são ignorados por padrão.
-- Um **componente** é o diretório do manifesto de build mais profundo (pom.xml, package.json,
-  pyproject.toml, ...) que contém código. Aliases de rede vêm de nome do artefato, `spring.application.name`,
+  Placeholders `${chave}` (Spring/Kotlin) são resolvidos pela configuração do próprio componente.
+- Testes (`/test/`, `*.spec.*`, `test_*`, `*_test.go`, projetos `*.Tests`) são ignorados por padrão.
+- Um **componente** é o diretório do manifesto de build mais profundo (pom.xml, build.gradle(.kts),
+  package.json, pyproject.toml, go.mod, `.csproj` web/executável, ...) que contém código. Projetos .NET de
+  biblioteca pertencem à aplicação do repositório. Aliases de rede vêm de nome do artefato, `spring.application.name`,
   serviços do docker-compose com `build:` e `Service` do Kubernetes.
 
 ## §3 Dependências (Linker) — regras e confiança fixas
@@ -43,6 +54,20 @@ Mudou uma regra? Atualize `PROMPT_VERSION` em `llm.py` (invalida o cache) e adic
 | `R-ASYNC-TOPIC` | mesmo nome de tópico/fila em produtor e consumidor | 0.95 |
 | `R-DATA-DSN` | DSN/JDBC explícito em código ou configuração | 0.95 |
 | `R-DATA-ENTITY` | entidade ORM sem datasource explícito | 0.60 |
+| `R-GRPC-HOST` | endereço do canal gRPC == alias de componente | 0.95 |
+| `R-GRPC-SERVICE` | stub do cliente == serviço implementado por um único componente | 0.90 |
+| `R-GRPC-EXTERNAL` | host do canal gRPC não pertence a nenhum componente escaneado | 0.80 |
+| `R-GRAPHQL-FIELD` | campo raiz da operação exposto por um único componente | 0.80 |
+| `R-SOAP-SERVICE` | serviço/contrato do cliente SOAP == serviço exposto por um único componente | 0.85 |
+| `R-DATA-CLOUD` | chamada do SDK AWS nomeando tabela DynamoDB / bucket S3 | 0.90 |
+| `R-CLOUD-IAC-SUFFIX` | nome no SDK só casa com o IaC ignorando prefixo/sufixo de ambiente | 0.75 |
+| `R-IAC-SUBSCRIPTION` | assinatura SNS → SQS/Lambda declarada em IaC | 0.95 |
+| `R-IAC-EVENT-SOURCE` | fila/stream/tabela/bucket aciona a função de um componente (IaC) | 0.85 |
+| `R-IAC-ENV-REF` | recurso referenciado no ambiente da função de um componente (direção desconhecida) | 0.70 |
+
+Todas as dependências síncronas (REST, gRPC, GraphQL, SOAP) vão do **downstream** (quem chama) para o
+**upstream** (quem provê). Filas SQS, tópicos SNS e streams Kinesis usam `R-ASYNC-TOPIC` como os tópicos Kafka;
+o nome do recurso é comparado sem placeholders de ambiente.
 
 Confiança < 0.8 ⇒ aresta tracejada nos diagramas; < 0.6 ⇒ aviso de validação e fila de revisão.
 
@@ -102,11 +127,17 @@ Nunca aumente a confiança para "parecer útil". Confiança final < 0.5 ⇒ `rev
 ## §5 Perfil CALM (validado em `calm/validator.py`)
 
 - Documento CALM 1.0 (`$schema` = `https://calm.finos.org/release/1.0/meta/core.json`), ids em kebab-case.
-- Mapeamento: componente ⇒ `service`/`webclient`; banco ⇒ `database`; tópico/fila ⇒ `data-asset`
-  (`metadata.asset-kind = messaging-topic`); host externo ⇒ `system` (`metadata.external = true`);
-  Business Domain BIAN ⇒ `ecosystem` + relacionamento `composed-of`.
-- Dependências ⇒ `connects` com `protocol` do enum CALM (Kafka ⇒ `TCP`, RabbitMQ ⇒ `AMQP`, banco ⇒ `JDBC`).
-  HTTP aponta para as interfaces (endpoints) do destino quando o caminho casa.
+- Mapeamento: componente ⇒ `service`/`webclient`; banco e tabela DynamoDB ⇒ `database`; bucket S3 ⇒
+  `data-asset` (`asset-kind = object-storage`); tópico/fila/stream ⇒ `data-asset` (`asset-kind =
+  messaging-topic | messaging-queue | event-stream`); host externo ⇒ `system` (`metadata.external = true`);
+  Business Domain BIAN ⇒ `ecosystem` + relacionamento `composed-of`. Recursos declarados em IaC levam
+  `metadata.declared-in`.
+- Dependências ⇒ `connects` com `protocol` do enum CALM (Kafka ⇒ `TCP`, RabbitMQ ⇒ `AMQP`, banco ⇒ `JDBC`,
+  AWS ⇒ `HTTPS`, gRPC/GraphQL/SOAP ⇒ `HTTP`/`HTTPS`) e `metadata.dependency-kind` (`http`, `grpc`, `graphql`,
+  `soap`, `async`, `data`, `external`). Dependências síncronas, de dados e externas levam
+  `metadata.direction = {downstream, upstream}` e apontam para as interfaces do destino quando a operação casa
+  (caminho REST, `/pacote.Serviço/Método`, `Query.campo`, `Serviço.Operação`). Interfaces não REST levam
+  `protocol`.
 - Obrigatório: `metadata.source` em serviços; `metadata.evidence`, `metadata.rule` e
   `metadata.confidence ∈ [0,1]` em toda aresta inferida; `metadata.bian.service-domain-id` válido.
 - Validação em três camadas, todas obrigatórias: JSON Schema (offline, schemas vendorizados),

@@ -24,11 +24,16 @@ class Evidence(BaseModel):
 
 
 class Endpoint(BaseModel):
-    """An API exposed by a component (inbound interface)."""
+    """An API exposed by a component (inbound interface).
+
+    `protocol` http: method GET/POST/... and URL path; grpc: method RPC and path /package.Service/Method;
+    graphql: method QUERY/MUTATION/SUBSCRIPTION and path Query.field; soap: method SOAP and path Service.Operation.
+    """
 
     method: str  # GET, POST, ... or "*"
     path: str
     handler: str = ""
+    protocol: str = "http"  # http | grpc | graphql | soap
     evidence: Evidence
 
 
@@ -37,6 +42,9 @@ class OutboundKind(str, Enum):
     MESSAGING_PUBLISH = "publish"
     MESSAGING_SUBSCRIBE = "subscribe"
     DATABASE = "database"
+    GRPC = "grpc"  # target: service name (pkg.Service) or channel address; detail: "RPC /pkg.Service/Method"
+    GRAPHQL = "graphql"  # target: endpoint URL or ""; detail: "QUERY Query.field"
+    SOAP = "soap"  # target: endpoint/WSDL URL or service name; detail: "SOAP Service.Operation"
 
 
 class OutboundCall(BaseModel):
@@ -45,7 +53,7 @@ class OutboundCall(BaseModel):
     kind: OutboundKind
     target: str  # URL, host alias, feign client name, topic name or datastore name
     detail: str = ""  # method+path for HTTP, table for DB, etc.
-    technology: str = ""  # kafka, rabbitmq, postgresql, oracle, ...
+    technology: str = ""  # kafka, rabbitmq, postgresql, oracle, dynamodb, s3, sqs, sns, kinesis, ...
     evidence: Evidence
 
 
@@ -79,6 +87,27 @@ class Component(BaseModel):
     readme_excerpt: str = ""
 
 
+class InfraResource(BaseModel):
+    """A cloud resource declared in infrastructure-as-code (Terraform, CloudFormation/SAM)."""
+
+    ref: str  # IaC address, unique per repository: aws_sqs_queue.orders | Cfn logical id
+    type: str  # dynamodb-table | s3-bucket | sqs-queue | sns-topic | kinesis-stream | lambda-function
+    name: str  # physical name; unresolved parts stay as ${...}
+    iac: str  # terraform | cloudformation
+    owner: str = ""  # component id when declared inside a component's folder
+    environment: dict[str, str] = Field(default_factory=dict)  # env var -> referenced resource ref (functions)
+    evidence: Evidence
+
+
+class InfraRelation(BaseModel):
+    """Wiring declared in IaC: SNS->SQS subscriptions, event sources feeding a function."""
+
+    kind: str  # subscription | event-source
+    source: str  # resource ref
+    destination: str  # resource ref
+    evidence: Evidence
+
+
 class RepoScan(BaseModel):
     repo: str
     location: str
@@ -86,12 +115,16 @@ class RepoScan(BaseModel):
     components: list[Component] = Field(default_factory=list)
     files_scanned: int = 0
     warnings: list[str] = Field(default_factory=list)
+    infrastructure: list[InfraResource] = Field(default_factory=list)
+    infra_relations: list[InfraRelation] = Field(default_factory=list)
 
 
 class DataStore(BaseModel):
     id: str
     name: str
     technology: str = ""
+    kind: str = "database"  # database | object-storage
+    iac: list[str] = Field(default_factory=list)  # repo:path:line of IaC declarations
     evidence: list[Evidence] = Field(default_factory=list)
 
 
@@ -99,11 +132,16 @@ class Topic(BaseModel):
     id: str
     name: str
     technology: str = "kafka"
+    kind: str = "topic"  # topic | queue | stream
+    iac: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
 
 
 class LinkKind(str, Enum):
     HTTP = "http"
+    GRPC = "grpc"
+    GRAPHQL = "graphql"
+    SOAP = "soap"
     ASYNC = "async"  # producer -> consumer through a topic
     DATA = "data"  # component -> datastore
     EXTERNAL = "external"  # component -> unresolved/external system

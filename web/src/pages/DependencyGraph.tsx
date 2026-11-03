@@ -25,6 +25,14 @@ const COLORS = { Application: "#688ae8", DataStore: "#2ea597", Topic: "#c33d69",
 const SHAPES = { Application: "round-rectangle", DataStore: "barrel", Topic: "tag", ExternalSystem: "hexagon" } as const;
 const TYPES = Object.keys(COLORS) as GraphNode["type"][];
 
+const EDGE_LABEL: Record<string, string> = { grpc: "gRPC", graphql: "GraphQL", soap: "SOAP" };
+
+function nodeLabel(n: GraphNode) {
+  if (n.type === "Application" && n.service_domain) return `${n.name}\n${n.service_domain}`;
+  if (n.technology) return `${n.name}\n${n.technology}`;
+  return n.name;
+}
+
 type Selection = { kind: "node"; node: GraphNode } | { kind: "edge"; edge: GraphEdge } | null;
 
 export default function DependencyGraphPage() {
@@ -53,8 +61,8 @@ export default function DependencyGraphPage() {
     return [
       ...nodes
         .filter((n) => n.type === "Application" || linked.has(n.id))
-        .map((n) => ({ data: { ...n, label: n.type === "Application" && n.service_domain ? `${n.name}\n${n.service_domain}` : n.name } })),
-      ...edges.map((e) => ({ data: { ...e, label: e.protocol } })),
+        .map((n) => ({ data: { ...n, label: nodeLabel(n) } })),
+      ...edges.map((e) => ({ data: { ...e, label: EDGE_LABEL[e.kind] ?? e.protocol } })),
     ];
   }, [data, types, domains, minConf]);
 

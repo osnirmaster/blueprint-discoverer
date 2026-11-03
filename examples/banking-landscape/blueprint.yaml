@@ -6,6 +6,11 @@ repositories:
   - { name: fraud-detection, path: fraud-detection }
   - { name: customer-service, path: customer-service }
   - { name: digital-banking-bff, path: digital-banking-bff }
+  - { name: loans-service, path: loans-service }
+  - { name: credit-scoring, path: credit-scoring }
+  - { name: cards-service, path: cards-service }
+  - { name: core-banking-legacy, path: core-banking-legacy }
+  - { name: platform-infra, path: platform-infra }
   # remote repositories are shallow-cloned into .blueprint/repos/
   # - { name: core-banking, url: https://github.com/acme/core-banking.git, ref: main }
 inference:

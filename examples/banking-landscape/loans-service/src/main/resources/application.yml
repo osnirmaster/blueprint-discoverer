@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: loans-service
+clients:
+  customer:
+    url: http://customer-service:3000
+grpc:
+  client:
+    credit-scoring:
+      address: static://credit-scoring:9090

@@ -1,0 +1,10 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.bank</groupId>
+  <artifactId>core-banking-legacy</artifactId>
+  <version>12.4.0</version>
+  <packaging>war</packaging>
+  <dependencies>
+    <dependency><groupId>com.sun.xml.ws</groupId><artifactId>jaxws-rt</artifactId><version>2.3.7</version></dependency>
+  </dependencies>
+</project>

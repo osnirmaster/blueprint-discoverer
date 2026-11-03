@@ -11,6 +11,7 @@ import CalmPage from "./pages/Calm";
 import DependencyGraphPage from "./pages/DependencyGraph";
 import ExplorerPage from "./pages/Explorer";
 import OverviewPage from "./pages/Overview";
+import SourcesPage from "./pages/Sources";
 import WikiPage from "./pages/Wiki";
 
 const NAV = [
@@ -19,6 +20,7 @@ const NAV = [
   { type: "link" as const, text: "Mapa de dependências", href: "/graph" },
   { type: "link" as const, text: "Mapa BIAN", href: "/bian" },
   { type: "divider" as const },
+  { type: "link" as const, text: "Fontes e scans", href: "/sources" },
   { type: "link" as const, text: "Manifesto CALM", href: "/calm" },
   { type: "link" as const, text: "Wiki", href: "/wiki" },
   { type: "link" as const, text: "Explorador Cypher", href: "/explorer" },
@@ -69,6 +71,7 @@ export default function App() {
             <Route path="/calm" element={<CalmPage />} />
             <Route path="/wiki/*" element={<WikiPage />} />
             <Route path="/explorer" element={<ExplorerPage />} />
+            <Route path="/sources" element={<SourcesPage />} />
           </Routes>
         }
       />

@@ -2,7 +2,7 @@
 
 Discovery is deterministic: a directory is a repository when it holds `.git` (directory or file, so
 worktrees and submodules count). Folders without git (plain checkouts, examples) fall back to one
-repository per top-level sub-directory that contains a build manifest.
+repository per top-level sub-directory that contains a build manifest or infrastructure-as-code.
 """
 
 from __future__ import annotations
@@ -18,18 +18,20 @@ from .cartographer.code.scanner import DEFAULT_EXCLUDES
 from .workspace import ProjectConfig, RepoSpec, slugify
 
 GIT_URL_RE = re.compile(r"^(https?://|ssh://|git@|file://)|\.git$")
+IAC_FILES = ("*.tf", "template.yaml", "template.yml", "*.template", "serverless.yml")
 
 
 def _skipped(name: str) -> bool:
     return name.startswith(".") or any(fnmatch.fnmatch(name, pat) for pat in DEFAULT_EXCLUDES)
 
 
-def _has_manifest(root: Path, max_depth: int = 3) -> bool:
+def has_project_files(root: Path, max_depth: int = 3) -> bool:
+    """True when a build manifest or IaC file exists within `max_depth` levels (skipping vendored dirs)."""
     stack = [(root, 0)]
     while stack:
         d, depth = stack.pop()
         for child in sorted(d.iterdir()):
-            if child.is_file() and any(fnmatch.fnmatch(child.name, m) for m in MANIFESTS):
+            if child.is_file() and any(fnmatch.fnmatch(child.name, m) for m in (*MANIFESTS, *IAC_FILES)):
                 return True
             if child.is_dir() and depth < max_depth and not _skipped(child.name):
                 stack.append((child, depth + 1))
@@ -53,7 +55,7 @@ def discover_repos(folder: Path, max_depth: int = 3) -> list[RepoSpec]:
             elif depth + 1 < max_depth:
                 stack.append((child, depth + 1))
     if not found:
-        found = [c for c in sorted(folder.iterdir()) if c.is_dir() and not _skipped(c.name) and _has_manifest(c)]
+        found = [c for c in sorted(folder.iterdir()) if c.is_dir() and not _skipped(c.name) and has_project_files(c)]
     specs = [RepoSpec(name=p.relative_to(folder).as_posix(), path=p.relative_to(folder).as_posix()) for p in found]
     return sorted(specs, key=lambda s: s.name)
 

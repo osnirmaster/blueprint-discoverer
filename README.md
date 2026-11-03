@@ -14,8 +14,13 @@ repos ─► Cartographer Code (AST) ─► Linker (regras R-*) ─► Semântic
 
 ## Destaques
 
-- **Determinístico por padrão**: extração por AST (tree-sitter para Java/TypeScript, `ast` para Python),
-  regras de dependência nomeadas com confiança fixa e classificação BIAN reprodutível. Funciona sem LLM.
+- **Determinístico por padrão**: extração por AST (tree-sitter para Java, Kotlin, C#, Go e TypeScript; `ast`
+  para Python), regras de dependência nomeadas com confiança fixa e classificação BIAN reprodutível.
+  Funciona sem LLM.
+- **REST, gRPC, GraphQL, SOAP e mensageria**: cada dependência vai do downstream (quem chama) para o
+  upstream (quem provê) e aponta a operação exata do destino (`.proto`, SDL e WSDL são lidos como contrato).
+- **AWS e IaC**: DynamoDB, S3, SQS, SNS e Kinesis vindos do SDK no código casam com o que Terraform e
+  CloudFormation/SAM declaram, inclusive assinaturas SNS→SQS e fontes de evento de funções.
 - **LLM com rédea curta** (opcional): Claude recebe só a evidência extraída, a taxonomia BIAN fechada e o
   [RULES.md](RULES.md); a resposta passa por guardas e fica em cache endereçado por conteúdo.
 - **Tudo com evidência**: cada nó, aresta e classificação aponta para `repo:arquivo:linha`.
@@ -100,11 +105,30 @@ overrides:
 Artefatos em `.blueprint/`: `facts/`, `links.json`, `semantic/`, `architecture.calm.json`,
 `validation.json`, `graph.lbdb`, `wiki/`, `cache/llm/`, `overrides/`.
 
+## O que o scan reconhece
+
+| Linguagem | Servidor (APIs expostas) | Clientes e dependências |
+|---|---|---|
+| Java / Kotlin | Spring MVC, JAX-RS, Ktor, gRPC (`*ImplBase`, `@GrpcService`), Spring GraphQL/DGS, JAX-WS, Spring-WS | Feign, `@HttpExchange`, MicroProfile Rest Client, Retrofit, RestTemplate/WebClient/RestClient, OkHttp, Apache HttpClient, Ktor client, stubs gRPC (`@GrpcClient`, coroutine stubs), WebServiceTemplate, Kafka/RabbitMQ/JMS, Spring Cloud AWS, AWS SDK v2, JPA/Spring Data |
+| C# / .NET | ASP.NET Core (controllers e minimal APIs), gRPC (`*Base`), WCF/CoreWCF, HotChocolate | HttpClient, Refit, RestSharp, clientes gRPC (`AddGrpcClient`, `GrpcChannel`), `ClientBase<T>`/`EndpointAddress`, Confluent.Kafka, EF Core, AWSSDK |
+| Go | net/http (incl. padrões Go 1.22), gin, echo, chi, fiber, gorilla/mux, `RegisterXServer` | `http.Get/NewRequest`, resty, `grpc.NewClient/Dial`, `pb.NewXClient`, kafka-go, sarama, confluent-kafka-go, AWS SDK v2, `sql.Open`, gowsdl |
+| TypeScript / JS | NestJS (REST, `@Resolver`, `@GrpcMethod`), Express/Fastify, Apollo SDL, node-soap | axios, fetch, got, ky, Nest `HttpService`, Apollo Client, grpc-js, Nest gRPC, node-soap, kafkajs, AWS SDK v3 |
+| Python | FastAPI, Flask, gRPC servicers, Strawberry/Graphene/Ariadne, Spyne | requests, httpx, aiohttp, urllib, stubs gRPC, zeep, Kafka, boto3, SQLAlchemy |
+
+Também são lidos: `application.yml/properties`, `appsettings*.json` (inclusive connection strings), `.env`,
+docker-compose, Kubernetes `Service`, OpenAPI, `.proto`, `*.graphql(s)`, `*.wsdl`, Terraform (`*.tf`, inclusive
+`terraform-aws-modules`) e CloudFormation/SAM.
+
 ## UI (Cloudscape)
 
 Visão geral · Aplicações (tabela filtrável) · Detalhe da aplicação (BIAN, APIs, dependências, impacto, nó CALM) ·
 Mapa de dependências (cytoscape, filtros por tipo/domínio/confiança) · Mapa BIAN (cobertura) ·
-Manifesto CALM (validação + JSON) · Wiki · Explorador Cypher.
+Manifesto CALM (validação + JSON) · Wiki · Explorador Cypher · **Fontes e scans**.
+
+A página **Fontes e scans** é a console de scan: lista os repositórios do landscape e permite reescanear só os
+selecionados, adicionar uma pasta local (com navegador de pastas), descobrir todos os repositórios de uma pasta
+ou informar uma URL git, gravando no `blueprint.yaml` se você quiser. A navegação fica restrita a
+`blueprint serve --fs-root <pasta>` (padrão: sua pasta pessoal) e lista apenas diretórios.
 
 Desenvolvimento: `blueprint serve` em um terminal e `cd web && npm run dev` em outro (proxy para `:8765`).
 

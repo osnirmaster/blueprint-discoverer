@@ -21,7 +21,9 @@ Read issues by `layer`:
 1. Keep standard node types (`service`, `webclient`, `database`, `data-asset`, `system`, `ecosystem`, `actor`,
    `network`, `ldap`). Extra semantics go in `metadata`, never in new node types.
 2. Protocols must be in the CALM enum (HTTP, HTTPS, JDBC, AMQP, TCP, mTLS, ...).
-3. Every `connects` keeps `metadata.{dependency-kind, confidence, rule, evidence}`.
+3. Every `connects` keeps `metadata.{dependency-kind, confidence, rule, evidence}`; synchronous, data and
+   external ones also `metadata.direction = {downstream, upstream}`. Cloud resources are `database` (DynamoDB)
+   or `data-asset` with `asset-kind` (`object-storage`, `messaging-queue`, `messaging-topic`, `event-stream`).
 4. Keep output deterministic: sort nodes by (node-type, unique-id), relationships by unique-id, no timestamps.
 5. If the validator must learn a new convention, add it to `calm/validator.py` layer 3 **and** RULES §5.
 6. Run `pytest -q tests/test_pipeline.py` (`test_pipeline_produces_valid_calm`, `test_calm_is_deterministic`,

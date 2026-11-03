@@ -20,6 +20,19 @@ TYPE_LABEL = {"service": "Serviço", "webclient": "Front-end", "database": "Banc
               "data-asset": "Tópico/Fila", "system": "Sistema externo", "ecosystem": "Domínio BIAN"}
 
 
+PROTOCOL_LABEL = {"http": "REST", "grpc": "gRPC", "graphql": "GraphQL", "soap": "SOAP"}
+ASSET_LABEL = {"messaging-topic": "Tópico", "messaging-queue": "Fila", "event-stream": "Stream",
+               "object-storage": "Bucket"}
+
+
+def _asset_kind(n: dict) -> str:
+    return (n.get("metadata") or {}).get("asset-kind", "")
+
+
+def _type_label(n: dict) -> str:
+    return ASSET_LABEL.get(_asset_kind(n)) or TYPE_LABEL.get(n.get("node-type", ""), n.get("node-type", "?"))
+
+
 def _mid(node_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", node_id)
 
@@ -30,6 +43,8 @@ def _mermaid_node(n: dict) -> str:
     t = n["node-type"]
     if t == "database":
         return f'{nid}[("{label}")]'
+    if _asset_kind(n) == "object-storage":
+        return f'{nid}[/"{label}"/]'
     if t == "data-asset":
         return f'{nid}>"{label}"]'
     if t == "system":
@@ -59,7 +74,8 @@ def _mermaid(nodes: list[dict], rels: list[dict], highlight: str | None = None) 
             continue
         conf = (r.get("metadata") or {}).get("confidence", 1)
         arrow = "-.->" if conf < 0.8 else "-->"
-        label = r.get("protocol", "")
+        kind = (r.get("metadata") or {}).get("dependency-kind", "")
+        label = PROTOCOL_LABEL[kind] if kind in ("grpc", "graphql", "soap") else r.get("protocol", "")
         lines.append(f'  {_mid(c["source"]["node"])} {arrow}|{label}| {_mid(c["destination"]["node"])}')
     if highlight:
         lines.append(f"  style {_mid(highlight)} stroke:#0972d3,stroke-width:3px")
@@ -188,21 +204,23 @@ class WikiGenerator:
                                            [r for r, _, _ in self._connects()], highlight=aid), ""]
         endpoints = [i for i in a.get("interfaces", []) if "path" in i]
         if endpoints:
-            md += ["## APIs expostas", "", "| Método | Caminho | Handler | Evidência |", "|---|---|---|---|"]
-            md += [f"| {e['method']} | `{e['path']}` | {e.get('handler') or '—'} | {_ev_link(e['evidence'], self.sources)} |"
-                   for e in endpoints]
+            md += ["## APIs expostas", "", "| Protocolo | Operação | Caminho | Handler | Evidência |",
+                   "|---|---|---|---|---|"]
+            md += [f"| {PROTOCOL_LABEL.get(e.get('protocol', 'http'), e.get('protocol'))} | {e['method']} | `{e['path']}` | "
+                   f"{e.get('handler') or '—'} | {_ev_link(e['evidence'], self.sources)} |" for e in endpoints]
             md.append("")
-        for title, items, key in (("Depende de", outs, "destino"), ("Usado por", ins, "origem")):
+        for title, items, key in (("Upstream — depende de", outs, "destino"),
+                                  ("Downstream — usado por", ins, "origem")):
             if not items:
                 continue
-            md += [f"## {title}", "", f"| {key.capitalize()} | Tipo | Protocolo | Detalhe | Confiança | Regra | Evidência |",
-                   "|---|---|---|---|---|---|---|"]
+            md += [f"## {title}", "", f"| {key.capitalize()} | Tipo | Dependência | Protocolo | Detalhe | Confiança | Regra | Evidência |",
+                   "|---|---|---|---|---|---|---|---|"]
             for r, other in sorted(items, key=lambda x: x[1]):
                 o = self.nodes.get(other, {"name": other, "node-type": "?"})
                 link = f"[{o['name']}]({other}.md)" if o["node-type"] in ("service", "webclient") else o["name"]
                 m = r.get("metadata") or {}
                 ev = ", ".join(_ev_link(e, self.sources) for e in m.get("evidence", [])[:3])
-                md.append(f"| {link} | {TYPE_LABEL.get(o['node-type'], o['node-type'])} | {r.get('protocol', '')} | "
+                md.append(f"| {link} | {_type_label(o)} | {m.get('dependency-kind', '')} | {r.get('protocol', '')} | "
                           f"{r.get('description', '')} | {m.get('confidence', 0):.2f} | `{m.get('rule', '')}` | {ev} |")
             md.append("")
         if self.graph is not None:
@@ -243,16 +261,23 @@ class WikiGenerator:
 
     def _data_and_messaging(self) -> Path:
         md = ["# Dados e mensageria", ""]
-        for title, ntype in (("Bancos de dados", "database"), ("Tópicos e filas", "data-asset"),
-                             ("Sistemas externos", "system")):
-            items = [n for n in self.nodes.values() if n["node-type"] == ntype]
+        groups = (("Bancos de dados", lambda n: n["node-type"] == "database"),
+                  ("Armazenamento de objetos", lambda n: _asset_kind(n) == "object-storage"),
+                  ("Tópicos, filas e streams", lambda n: n["node-type"] == "data-asset" and _asset_kind(n) != "object-storage"),
+                  ("Sistemas externos", lambda n: n["node-type"] == "system"))
+        for title, belongs in groups:
+            items = [n for n in self.nodes.values() if belongs(n)]
             if not items:
                 continue
-            md += [f"## {title}", "", "| Nome | Escritores/produtores | Leitores/consumidores |", "|---|---|---|"]
+            md += [f"## {title}", "", "| Nome | Tipo | Tecnologia | Declarado em (IaC) | Escritores/produtores | Leitores/consumidores |",
+                   "|---|---|---|---|---|---|"]
             for n in sorted(items, key=lambda x: x["name"]):
                 srcs = sorted({s for _, s, d in self._connects() if d == n["unique-id"]})
                 dsts = sorted({d for _, s, d in self._connects() if s == n["unique-id"]})
-                md.append(f"| {n['name']} | {', '.join(srcs) or '—'} | {', '.join(dsts) or '—'} |")
+                meta = n.get("metadata") or {}
+                iac = ", ".join(_ev_link(e, self.sources) for e in meta.get("declared-in", [])) or "—"
+                md.append(f"| {n['name']} | {_type_label(n)} | {meta.get('technology', '') or '—'} | {iac} | "
+                          f"{', '.join(srcs) or '—'} | {', '.join(dsts) or '—'} |")
             md.append("")
         if self.graph is not None:
             shared = self.graph.shared_datastores()

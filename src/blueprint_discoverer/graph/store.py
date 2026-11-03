@@ -20,17 +20,18 @@ SCHEMA = [
     """CREATE NODE TABLE Application(id STRING, name STRING, node_type STRING, description STRING,
         repo STRING, languages STRING, frameworks STRING, purpose STRING, confidence DOUBLE,
         review_required BOOLEAN, method STRING, service_domain_id STRING, PRIMARY KEY(id))""",
-    "CREATE NODE TABLE DataStore(id STRING, name STRING, technology STRING, PRIMARY KEY(id))",
-    "CREATE NODE TABLE Topic(id STRING, name STRING, technology STRING, PRIMARY KEY(id))",
+    "CREATE NODE TABLE DataStore(id STRING, name STRING, technology STRING, kind STRING, iac STRING, PRIMARY KEY(id))",
+    "CREATE NODE TABLE Topic(id STRING, name STRING, technology STRING, kind STRING, iac STRING, PRIMARY KEY(id))",
     "CREATE NODE TABLE ExternalSystem(id STRING, name STRING, description STRING, PRIMARY KEY(id))",
     """CREATE NODE TABLE Endpoint(id STRING, method STRING, path STRING, handler STRING, evidence STRING,
-        PRIMARY KEY(id))""",
+        protocol STRING, PRIMARY KEY(id))""",
     """CREATE NODE TABLE ServiceDomain(id STRING, name STRING, functional_pattern STRING, description STRING,
         PRIMARY KEY(id))""",
     "CREATE NODE TABLE BusinessDomain(id STRING, name STRING, PRIMARY KEY(id))",
     "CREATE NODE TABLE BusinessArea(id STRING, name STRING, PRIMARY KEY(id))",
     """CREATE REL TABLE DEPENDS_ON(FROM Application TO Application, FROM Application TO DataStore,
         FROM Application TO Topic, FROM Topic TO Application, FROM Application TO ExternalSystem,
+        FROM Topic TO Topic, FROM DataStore TO Application,
         id STRING, kind STRING, protocol STRING, description STRING, confidence DOUBLE, rule STRING,
         evidence STRING)""",
     "CREATE REL TABLE EXPOSES(FROM Application TO Endpoint)",
@@ -49,6 +50,10 @@ class GraphStore:
         self.path = path
         self.db = lb.Database(str(path), read_only=read_only)
         self.conn = lb.Connection(self.db)
+
+    def close(self) -> None:
+        self.conn.close()
+        self.db.close()
 
     @classmethod
     def rebuild(cls, path: Path, calm: dict, landscape: Landscape | None = None) -> GraphStore:
@@ -98,11 +103,13 @@ class GraphStore:
     def _load_calm(self, calm: dict) -> None:
         labels: dict[str, str] = {}
         for n in calm.get("nodes", []):
+            meta = n.get("metadata") or {}
             table = NODE_TABLE.get(n["node-type"])
+            if meta.get("asset-kind") == "object-storage":
+                table = "DataStore"  # S3 buckets are data-assets in CALM but storage in the graph
             if table is None:
                 continue
             labels[n["unique-id"]] = table
-            meta = n.get("metadata") or {}
             if table == "Application":
                 sem, bian, tech = meta.get("semantics", {}), meta.get("bian", {}), meta.get("technology", {})
                 self.conn.execute(
@@ -119,9 +126,10 @@ class GraphStore:
                     if "path" not in iface:
                         continue
                     self.conn.execute(
-                        "CREATE (:Endpoint {id:$id, method:$m, path:$p, handler:$h, evidence:$e})",
+                        "CREATE (:Endpoint {id:$id, method:$m, path:$p, handler:$h, evidence:$e, protocol:$pr})",
                         {"id": iface["unique-id"], "m": iface.get("method", ""), "p": iface["path"],
-                         "h": iface.get("handler", ""), "e": iface.get("evidence", "")})
+                         "h": iface.get("handler", ""), "e": iface.get("evidence", ""),
+                         "pr": iface.get("protocol", "http")})
                     self.conn.execute("MATCH (a:Application {id:$a}), (e:Endpoint {id:$e}) CREATE (a)-[:EXPOSES]->(e)",
                                       {"a": n["unique-id"], "e": iface["unique-id"]})
                 if bian.get("service-domain-id"):
@@ -132,8 +140,10 @@ class GraphStore:
                 self.conn.execute("CREATE (:ExternalSystem {id:$id, name:$name, description:$d})",
                                   {"id": n["unique-id"], "name": n["name"], "d": n["description"]})
             else:
-                self.conn.execute(f"CREATE (:{table} {{id:$id, name:$name, technology:$t}})",
-                                  {"id": n["unique-id"], "name": n["name"], "t": meta.get("technology", "")})
+                kind = meta.get("asset-kind", "database") if table == "DataStore" else meta.get("asset-kind", "")
+                self.conn.execute(f"CREATE (:{table} {{id:$id, name:$name, technology:$t, kind:$k, iac:$iac}})",
+                                  {"id": n["unique-id"], "name": n["name"], "t": meta.get("technology", ""),
+                                   "k": kind, "iac": json.dumps(meta.get("declared-in", []))})
 
         for r in calm.get("relationships", []):
             conn = r.get("relationship-type", {}).get("connects")
@@ -162,7 +172,8 @@ class GraphStore:
         nodes = []
         for label in ("Application", "DataStore", "Topic", "ExternalSystem"):
             extra = ", n.service_domain_id AS sd, n.confidence AS confidence, n.review_required AS review" \
-                if label == "Application" else ""
+                if label == "Application" else ", n.technology AS technology, n.kind AS kind" \
+                if label in ("DataStore", "Topic") else ""
             for row in self.q(f"MATCH (n:{label}) RETURN n.id AS id, n.name AS name{extra} ORDER BY n.id"):
                 row["type"] = label
                 nodes.append(row)

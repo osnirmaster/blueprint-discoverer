@@ -24,7 +24,7 @@ from .bian.landscape import Landscape
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "2026-11-02.1"
+PROMPT_VERSION = "2026-11-02.2"
 MAX_ITEMS = {"endpoints": 60, "symbols": 80, "outbound": 40}
 
 

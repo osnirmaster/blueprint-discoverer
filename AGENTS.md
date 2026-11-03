@@ -24,7 +24,9 @@ repos ─► Cartographer Code (AST + config) ─► facts/*.json
 
 | Caminho | Responsabilidade |
 |---|---|
-| `src/blueprint_discoverer/cartographer/code/` | scanner, detecção de componentes, extratores AST (`extractors/java.py`, `typescript.py`, `python.py`), configuração (`config.py`) |
+| `src/blueprint_discoverer/cartographer/code/` | scanner, detecção de componentes, configuração (`config.py`) e contratos `.proto`/GraphQL/WSDL (`contracts.py`) |
+| `src/blueprint_discoverer/cartographer/code/extractors/` | AST por linguagem: `java.py` e `kotlin.py` (regras JVM compartilhadas em `jvm.py`), `csharp.py`, `go.py`, `typescript.py`, `python.py`; utilitários AWS/gRPC/GraphQL em `base.py` |
+| `src/blueprint_discoverer/cartographer/infra.py` | IaC: Terraform (tree-sitter-hcl) e CloudFormation/SAM → recursos AWS e sua fiação |
 | `src/blueprint_discoverer/discovery.py` | descoberta de repositórios numa pasta e edição do `blueprint.yaml` (`discover`, `repo`) |
 | `src/blueprint_discoverer/linker/resolver.py` | regras determinísticas de dependência (tabela em RULES §3) |
 | `src/blueprint_discoverer/semantic/` | paisagem BIAN, classificador determinístico, camada LLM (`llm.py`) e motor (`inference.py`) |
@@ -32,6 +34,7 @@ repos ─► Cartographer Code (AST + config) ─► facts/*.json
 | `src/blueprint_discoverer/graph/store.py` | projeção LadybugDB + consultas (impacto, cobertura BIAN) |
 | `src/blueprint_discoverer/wiki/generator.py` | wiki Markdown/Mermaid |
 | `src/blueprint_discoverer/api/app.py` | API REST para a UI |
+| `src/blueprint_discoverer/api/console.py` | console de fontes: navegação de pastas, descoberta e scans em segundo plano |
 | `web/` | UI React + Cloudscape (cytoscape para o grafo) |
 | `schemas/calm/1.0/` | meta-schemas CALM vendorizados (validação offline) |
 | `examples/banking-landscape/` | 5 repositórios de exemplo (Java/Spring, Python/FastAPI, TS/Nest/Express) |
@@ -48,6 +51,7 @@ cd examples/banking-landscape && ../../.venv/bin/blueprint run   # pipeline comp
 .venv/bin/blueprint serve -c examples/banking-landscape/blueprint.yaml   # API + UI em :8765
 cd web && npm install && npm run dev                              # UI em modo dev (:5173, proxy p/ :8765)
 cd web && npm run typecheck && npm run build                      # checagem e build da UI
+# a console "Fontes e scans" da UI navega só dentro de --fs-root (padrão: home) e grava no blueprint.yaml do -c
 ```
 
 ## Regras de trabalho
@@ -76,6 +80,10 @@ cd web && npm run typecheck && npm run build                      # checagem e b
 | **Landscape Reviewer** | trabalha a fila de revisão (baixa confiança, não resolvidos) | `.claude/skills/landscape-review` |
 
 ## Problemas conhecidos
+
+- **Gramática Kotlin (tree-sitter-kotlin 1.1):** corpos de classe numa linha só (`interface X { fun a(): T }`)
+  seguidos de outra declaração geram um nó `ERROR` no topo do arquivo. O extrator reanalisa essas regiões
+  isoladamente; se continuar com erro, extrai o que a árvore parcial permitir. Código multilinha não é afetado.
 
 - **LadybugDB sob Rosetta:** com Python x86_64 rodando em Apple Silicon, criar ou abrir o banco custa ~60 s
   de CPU; no arm64 nativo leva menos de 1 s. Use um Python **arm64** nativo

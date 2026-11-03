@@ -5,13 +5,14 @@ projections of it. Output is deterministic (sorted ids, stable slugs) so it diff
 
 Mapping (see RULES.md §5):
   component (service)      -> node-type "service"      | webclient -> "webclient"
-  datastore                -> node-type "database"
-  messaging topic          -> node-type "data-asset"   (metadata.asset-kind = messaging-topic)
+  datastore / DynamoDB     -> node-type "database"
+  S3 bucket                -> node-type "data-asset"   (metadata.asset-kind = object-storage)
+  topic / queue / stream   -> node-type "data-asset"   (asset-kind messaging-topic | messaging-queue | event-stream)
   external host            -> node-type "system"       (metadata.external = true)
   BIAN business domain     -> node-type "ecosystem" + composed-of relationship over its services
-  HTTP link                -> connects (HTTP/HTTPS), destination interface = matched endpoint group
-  async link               -> connects (TCP/AMQP) through the topic node
-  data link                -> connects (JDBC)
+  HTTP/gRPC/GraphQL/SOAP   -> connects downstream -> upstream, destination interfaces = matched operations
+  async link               -> connects (TCP/AMQP/HTTPS) through the topic/queue/stream node
+  data link                -> connects (JDBC/HTTPS)
 """
 
 from __future__ import annotations
@@ -36,10 +37,13 @@ def _component_node(comp: Component, scan: RepoScan, profile: SemanticProfile | 
     for alias in comp.aliases[:1]:
         interfaces.append({"unique-id": f"{comp.id}-host", "host": alias})
     for e in comp.endpoints:
-        interfaces.append({
+        iface = {
             "unique-id": slugify(f"{comp.id}-{e.method}-{e.path}"),
             "method": e.method, "path": e.path, "handler": e.handler, "evidence": e.evidence.ref(),
-        })
+        }
+        if e.protocol != "http":
+            iface["protocol"] = e.protocol
+        interfaces.append(iface)
     meta: dict = {
         "source": {"repository": comp.repo, "location": scan.location, "path": comp.root_path,
                    "commit": scan.commit},
@@ -79,8 +83,15 @@ def _component_node(comp: Component, scan: RepoScan, profile: SemanticProfile | 
     }
 
 
-def _endpoint_interfaces(link_desc: str, dest: Component | None) -> list[str]:
-    """Pick destination interface ids whose method+path appear in the link description."""
+SYNC_KINDS = {LinkKind.HTTP, LinkKind.GRPC, LinkKind.GRAPHQL, LinkKind.SOAP}
+ASSET_KIND = {"topic": "messaging-topic", "queue": "messaging-queue", "stream": "event-stream"}
+
+
+def _endpoint_interfaces(link_desc: str, dest: Component | None, protocol: str = "http") -> list[str]:
+    """Pick destination interface ids whose operation appears in the link description.
+
+    http: "GET /accounts/{id}"; grpc: "RPC /pkg.Svc/*" or "RPC /pkg.Svc/Method";
+    graphql: "QUERY Query.field"; soap: "SOAP Svc.Operation" or "SOAP Svc.*"."""
     if dest is None:
         return []
     out = []
@@ -88,9 +99,17 @@ def _endpoint_interfaces(link_desc: str, dest: Component | None) -> list[str]:
         parts = call.split(" ", 1)
         if len(parts) != 2:
             continue
-        method, path = parts[0].upper(), re.sub(r"\{[^}]*\}", "x", parts[1].split("?")[0])
+        method, target = parts[0].upper(), parts[1].split("?")[0]
         for e in dest.endpoints:
-            if (e.method in (method, "*")) and template_regex(e.path).match(path):
+            if e.protocol != protocol:
+                continue
+            if protocol == "http":
+                ok = e.method in (method, "*") and template_regex(e.path).match(re.sub(r"\{[^}]*\}", "x", target))
+            elif target.endswith("*"):
+                ok = e.path.startswith(target[:-1])
+            else:
+                ok = e.path == target
+            if ok:
                 out.append(slugify(f"{dest.id}-{e.method}-{e.path}"))
     return sorted(set(out))
 
@@ -106,17 +125,27 @@ def build_architecture(name: str, scans: list[RepoScan], links: LinkResult,
         comp, scan = comps[cid]
         nodes.append(_component_node(comp, scan, prof.get(cid)))
     for ds in links.datastores:
+        meta = {"technology": ds.technology, "evidence": _evidence(ds.evidence)}
+        if ds.iac:
+            meta["declared-in"] = sorted(ds.iac)
+        if ds.kind == "object-storage":
+            meta["asset-kind"] = "object-storage"
+            nodes.append({"unique-id": ds.id, "node-type": "data-asset", "name": ds.name,
+                          "description": f"{ds.technology} bucket '{ds.name}'", "metadata": meta})
+            continue
+        source = "declared in IaC" if ds.iac else "inferred from code/config"
         nodes.append({
             "unique-id": ds.id, "node-type": "database", "name": ds.name,
-            "description": f"{ds.technology or 'Database'} {ds.name} (inferred from code/config)",
-            "metadata": {"technology": ds.technology, "evidence": _evidence(ds.evidence)},
+            "description": f"{ds.technology or 'Database'} {ds.name} ({source})", "metadata": meta,
         })
     for t in links.topics:
+        meta = {"asset-kind": ASSET_KIND.get(t.kind, "messaging-topic"), "technology": t.technology,
+                "evidence": _evidence(t.evidence)}
+        if t.iac:
+            meta["declared-in"] = sorted(t.iac)
         nodes.append({
             "unique-id": t.id, "node-type": "data-asset", "name": t.name,
-            "description": f"{t.technology} topic/queue '{t.name}'",
-            "metadata": {"asset-kind": "messaging-topic", "technology": t.technology,
-                         "evidence": _evidence(t.evidence)},
+            "description": f"{t.technology} {t.kind} '{t.name}'", "metadata": meta,
         })
     for ext in links.externals:
         nodes.append({
@@ -128,8 +157,8 @@ def build_architecture(name: str, scans: list[RepoScan], links: LinkResult,
     for link in links.links:
         dest_comp = comps.get(link.destination, (None, None))[0]
         destination = {"node": link.destination}
-        if link.kind == LinkKind.HTTP:
-            ifaces = _endpoint_interfaces(link.description, dest_comp)
+        if link.kind in SYNC_KINDS:
+            ifaces = _endpoint_interfaces(link.description, dest_comp, link.kind.value)
             if ifaces:
                 destination["interfaces"] = ifaces
         rel = {
@@ -147,6 +176,9 @@ def build_architecture(name: str, scans: list[RepoScan], links: LinkResult,
             rel["protocol"] = link.protocol
         if link.via:
             rel["metadata"]["via"] = link.via
+        if link.kind in SYNC_KINDS or link.kind in (LinkKind.EXTERNAL, LinkKind.DATA):
+            # source calls destination: the caller is downstream, the provider upstream
+            rel["metadata"]["direction"] = {"downstream": link.source, "upstream": link.destination}
         relationships.append(rel)
 
     # BIAN business domains as ecosystems composed of the services that realise them

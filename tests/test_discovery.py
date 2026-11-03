@@ -10,7 +10,8 @@ from blueprint_discoverer.pipeline import Pipeline
 from blueprint_discoverer.workspace import ProjectConfig, Workspace, read_json
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "banking-landscape"
-EXAMPLE_REPOS = ["accounts-service", "customer-service", "digital-banking-bff", "fraud-detection", "payments-service"]
+EXAMPLE_REPOS = ["accounts-service", "cards-service", "core-banking-legacy", "credit-scoring", "customer-service",
+                 "digital-banking-bff", "fraud-detection", "loans-service", "payments-service", "platform-infra"]
 
 
 @pytest.fixture

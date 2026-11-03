@@ -1,12 +1,8 @@
-"""Java / Spring extractor (tree-sitter).
+"""Java extractor (tree-sitter).
 
-Recognised facts:
-  * @RestController/@Controller + @RequestMapping/@GetMapping/... -> inbound endpoints
-  * @FeignClient(name|value|url) + its mapping annotations          -> outbound HTTP calls
-  * RestTemplate / WebClient calls with literal http(s) URLs          -> outbound HTTP calls
-  * @KafkaListener(topics) / @RabbitListener(queues)                   -> subscriptions
-  * kafkaTemplate.send("topic", ...) / rabbitTemplate.convertAndSend  -> publications
-  * @Entity/@Table, Spring Data repositories                          -> persistence symbols
+Translates the Java syntax tree into the neutral records of `jvm.py`, where the framework rules
+(Spring, JAX-RS, Feign, Retrofit, gRPC, GraphQL, SOAP, messaging, AWS SDK) live. String constants
+(`static final String X = "..."` and local variables) are propagated into annotation and call arguments.
 """
 
 from __future__ import annotations
@@ -14,79 +10,67 @@ from __future__ import annotations
 import tree_sitter_java as tsjava
 from tree_sitter import Language, Node, Parser
 
-from ....model import CodeSymbol, Endpoint, OutboundCall, OutboundKind
-from .base import URL_RE, FileContext, FileFacts, join_paths, line_of, text, unquote, walk
+from .base import FileContext, FileFacts, line_of, text, walk
+from .jvm import Ann, Call, Member, TypeDecl, call_facts, type_facts
 
 _LANG = Language(tsjava.language())
-
-MAPPINGS = {
-    "GetMapping": "GET",
-    "PostMapping": "POST",
-    "PutMapping": "PUT",
-    "DeleteMapping": "DELETE",
-    "PatchMapping": "PATCH",
-    "RequestMapping": "*",
-}
-REST_CLIENT_METHODS = {
-    "getForObject", "getForEntity", "postForObject", "postForEntity", "put", "delete", "exchange",
-    "patchForObject", "uri", "retrieve",
-}
-STEREOTYPES = {
-    "RestController": "spring-web", "Controller": "spring-web", "Service": "spring",
-    "Repository": "spring-data", "Entity": "jpa", "FeignClient": "spring-cloud-openfeign",
-    "KafkaListener": "spring-kafka", "RabbitListener": "spring-amqp", "SpringBootApplication": "spring-boot",
-}
+STATEMENTS = ("expression_statement", "local_variable_declaration", "return_statement", "field_declaration")
 
 
-def _annotations(node: Node) -> list[Node]:
-    mods = next((c for c in node.children if c.type == "modifiers"), None)
-    if mods is None:
-        return []
-    return [c for c in mods.children if c.type in ("annotation", "marker_annotation")]
-
-
-def _ann_name(ann: Node) -> str:
-    name = ann.child_by_field_name("name")
-    return text(name).split(".")[-1]
-
-
-def _values(node: Node) -> list[str]:
+def _string(node: Node, consts: dict[str, str]) -> str | None:
     if node.type == "string_literal":
-        return [unquote(text(node))]
+        raw = text(node)
+        return raw[3:-3].strip() if raw.startswith('"""') else raw[1:-1]
+    if node.type == "identifier":
+        return consts.get(text(node))
+    if node.type == "decimal_integer_literal":
+        return text(node)
+    if node.type == "field_access":  # Constants.TOPIC
+        return consts.get(text(node.child_by_field_name("field")))
+    if node.type == "binary_expression":
+        parts = [_string(c, consts) for c in node.named_children]
+        return "".join(p for p in parts if p) if any(parts) else None
+    return None
+
+
+def _values(node: Node, consts: dict[str, str]) -> list[str]:
     if node.type == "element_value_array_initializer":
-        return [v for c in node.children for v in _values(c)]
+        return [v for c in node.named_children for v in _values(c, consts)]
+    v = _string(node, consts)
+    if v is not None:
+        return [v]
     if node.type in ("field_access", "identifier", "scoped_identifier"):
         return [text(node)]
     return []
 
 
-def _ann_args(ann: Node) -> dict[str, list[str]]:
-    """{"value": [...], "path": [...], "method": [...]} from an annotation argument list."""
+def _ann(ann: Node, consts: dict[str, str]) -> Ann:
     args: dict[str, list[str]] = {}
     arglist = ann.child_by_field_name("arguments")
-    if arglist is None:
-        return args
-    for c in arglist.children:
+    for c in arglist.named_children if arglist is not None else []:
         if c.type == "element_value_pair":
             key = text(c.child_by_field_name("key"))
-            args.setdefault(key, []).extend(_values(c.child_by_field_name("value")))
+            args.setdefault(key, []).extend(_values(c.child_by_field_name("value"), consts))
         else:
-            vals = _values(c)
-            if vals:
-                args.setdefault("value", []).extend(vals)
-    return args
+            args.setdefault("value", []).extend(_values(c, consts))
+    return Ann(name=text(ann.child_by_field_name("name")).split(".")[-1], args=args, line=line_of(ann),
+               text=text(ann))
 
 
-def _mapping(ann: Node) -> tuple[str, list[str]] | None:
-    name = _ann_name(ann)
-    if name not in MAPPINGS:
-        return None
-    args = _ann_args(ann)
-    paths = args.get("value", []) + args.get("path", []) or [""]
-    method = MAPPINGS[name]
-    if method == "*" and args.get("method"):
-        method = args["method"][0].split(".")[-1].upper()
-    return method, paths
+def _modifiers(node: Node) -> Node | None:
+    return next((c for c in node.children if c.type == "modifiers"), None)
+
+
+def _anns(node: Node, consts: dict[str, str]) -> list[Ann]:
+    mods = _modifiers(node)
+    return [_ann(c, consts) for c in (mods.children if mods else []) if c.type in ("annotation", "marker_annotation")]
+
+
+def _statement(node: Node) -> str:
+    n = node
+    while n.parent is not None and n.type not in STATEMENTS:
+        n = n.parent
+    return text(n)
 
 
 class JavaExtractor:
@@ -98,109 +82,55 @@ class JavaExtractor:
 
     def extract(self, ctx: FileContext) -> FileFacts:
         facts = FileFacts()
-        tree = self._parser.parse(ctx.source)
-        root = tree.root_node
+        root = self._parser.parse(ctx.source).root_node
         package = ""
+        consts: dict[str, str] = {}
         for n in root.children:
             if n.type == "package_declaration":
                 package = text(n).removeprefix("package").strip(" ;")
                 facts.packages.add(package)
             elif n.type == "import_declaration":
                 facts.imports.add(text(n).removeprefix("import").strip(" ;").removeprefix("static "))
+        for n in walk(root):
+            if n.type == "variable_declarator":
+                name, value = n.child_by_field_name("name"), n.child_by_field_name("value")
+                if value is not None and (v := _string(value, consts)) is not None:
+                    consts[text(name)] = v
 
         for node in walk(root):
             if node.type in ("class_declaration", "interface_declaration", "record_declaration"):
-                self._type_decl(node, ctx, facts, package)
+                type_facts(self._type(node, consts, package, ctx), ctx, facts)
             elif node.type == "method_invocation":
-                self._invocation(node, ctx, facts)
+                args = node.child_by_field_name("arguments")
+                call_facts(Call(
+                    receiver=text(node.child_by_field_name("object")), method=text(node.child_by_field_name("name")),
+                    args=[_string(a, consts) for a in (args.named_children if args else [])],
+                    line=line_of(node), statement=_statement(node)), ctx, facts)
+            elif node.type == "object_creation_expression":
+                args = node.child_by_field_name("arguments")
+                call_facts(Call(
+                    receiver="", method=text(node.child_by_field_name("type")).split("<")[0].split(".")[-1],
+                    args=[_string(a, consts) for a in (args.named_children if args else [])],
+                    line=line_of(node), statement=_statement(node), is_new=True), ctx, facts)
         return facts
 
-    def _type_decl(self, node: Node, ctx: FileContext, facts: FileFacts, package: str) -> None:
-        name = text(node.child_by_field_name("name"))
-        anns = _annotations(node)
-        ann_names = [_ann_name(a) for a in anns]
-        for a in ann_names:
-            if a in STEREOTYPES:
-                facts.frameworks.add(STEREOTYPES[a])
-
-        kind = "interface" if node.type == "interface_declaration" else "class"
-        if "Entity" in ann_names or "Table" in ann_names:
-            kind = "entity"
-        supers = text(node.child_by_field_name("interfaces")) + text(node.child_by_field_name("superclass"))
-        if any(r in supers for r in ("JpaRepository", "CrudRepository", "MongoRepository", "ReactiveCrudRepository")):
-            kind = "repository"
-            facts.frameworks.add("spring-data")
-        facts.symbols.append(CodeSymbol(
-            kind=kind, name=name, qualified_name=f"{package}.{name}" if package else name,
-            annotations=ann_names, evidence=ctx.evidence(line_of(node), ctx.line_text(line_of(node))),
-        ))
-        if kind == "entity":
-            table = next((_ann_args(a).get("name", [""])[0] for a in anns if _ann_name(a) == "Table"), "")
-            facts.outbound.append(OutboundCall(
-                kind=OutboundKind.DATABASE, target="", detail=table or name, technology="jpa",
-                evidence=ctx.evidence(line_of(node), f"@Entity {name}"),
-            ))
-
-        feign = next((a for a in anns if _ann_name(a) == "FeignClient"), None)
-        feign_target = ""
-        if feign is not None:
-            args = _ann_args(feign)
-            feign_target = (args.get("url") or args.get("name") or args.get("value") or [name])[0]
-        prefix_paths = [""]
-        for a in anns:
-            m = _mapping(a)
-            if m:
-                prefix_paths = m[1]
-        is_controller = any(a in ("RestController", "Controller") for a in ann_names)
-
+    @staticmethod
+    def _type(node: Node, consts: dict[str, str], package: str, ctx: FileContext) -> TypeDecl:
+        is_interface = node.type == "interface_declaration"
+        members = []
         body = node.child_by_field_name("body")
-        if body is None:
-            return
-        for member in body.children:
-            if member.type != "method_declaration":
-                continue
-            for a in _annotations(member):
-                if _ann_name(a) in ("KafkaListener", "RabbitListener", "JmsListener"):
-                    args = _ann_args(a)
-                    tech = {"KafkaListener": "kafka", "RabbitListener": "rabbitmq", "JmsListener": "jms"}[_ann_name(a)]
-                    for topic in args.get("topics", []) + args.get("queues", []) + args.get("destination", []) + args.get("value", []):
-                        facts.outbound.append(OutboundCall(
-                            kind=OutboundKind.MESSAGING_SUBSCRIBE, target=topic, technology=tech,
-                            evidence=ctx.evidence(line_of(a), text(a)),
-                        ))
-                m = _mapping(a)
-                if not m:
-                    continue
-                method, paths = m
-                handler = f"{name}.{text(member.child_by_field_name('name'))}"
-                for prefix in prefix_paths:
-                    for p in paths:
-                        full = join_paths(prefix, p)
-                        ev = ctx.evidence(line_of(a), text(a))
-                        if feign is not None:
-                            facts.outbound.append(OutboundCall(
-                                kind=OutboundKind.HTTP, target=feign_target, detail=f"{method} {full}",
-                                technology="feign", evidence=ev,
-                            ))
-                        elif is_controller:
-                            facts.endpoints.append(Endpoint(method=method, path=full, handler=handler, evidence=ev))
-
-    def _invocation(self, node: Node, ctx: FileContext, facts: FileFacts) -> None:
-        method = text(node.child_by_field_name("name"))
-        obj = text(node.child_by_field_name("object")).lower()
-        args = node.child_by_field_name("arguments")
-        literals = [unquote(text(c)) for c in (args.children if args else []) if c.type == "string_literal"]
-        ev = ctx.evidence(line_of(node), ctx.line_text(line_of(node)))
-        if method == "send" and "kafka" in obj and literals:
-            facts.outbound.append(OutboundCall(
-                kind=OutboundKind.MESSAGING_PUBLISH, target=literals[0], technology="kafka", evidence=ev))
-        elif method == "convertAndSend" and "rabbit" in obj and literals:
-            facts.outbound.append(OutboundCall(
-                kind=OutboundKind.MESSAGING_PUBLISH, target=literals[0], technology="rabbitmq", evidence=ev))
-        elif method in REST_CLIENT_METHODS:
-            for lit in literals:
-                url = URL_RE.search(lit)
-                if url:
-                    facts.outbound.append(OutboundCall(
-                        kind=OutboundKind.HTTP, target=url.group(0), detail=method, technology="rest-client",
-                        evidence=ev))
+        for m in body.named_children if body else []:
+            mods = text(_modifiers(m)) if _modifiers(m) else ""
+            if m.type == "method_declaration":
+                members.append(Member(name=text(m.child_by_field_name("name")), kind="method", anns=_anns(m, consts),
+                                      line=line_of(m), public=is_interface or "public" in mods))
+            elif m.type == "field_declaration":
+                declarator = m.child_by_field_name("declarator")
+                members.append(Member(name=text(declarator.child_by_field_name("name")) if declarator else "",
+                                      kind="field", anns=_anns(m, consts), line=line_of(m),
+                                      type_text=text(m.child_by_field_name("type"))))
+        supers = " ".join(text(node.child_by_field_name(f)) for f in ("superclass", "interfaces"))
+        supers += " " + " ".join(text(c) for c in node.children if c.type == "extends_interfaces")
+        return TypeDecl(name=text(node.child_by_field_name("name")), kind="interface" if is_interface else "class",
+                        anns=_anns(node, consts), supers=supers, members=members, line=line_of(node),
+                        package=package, line_text=ctx.line_text(line_of(node)))

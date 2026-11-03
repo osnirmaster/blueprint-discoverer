@@ -18,11 +18,23 @@ from ...model import Endpoint, Evidence, OutboundCall, OutboundKind
 
 MANIFESTS = ("pom.xml", "build.gradle", "build.gradle.kts", "package.json", "pyproject.toml",
              "requirements.txt", "setup.py", "go.mod", "*.csproj")
-URL_VALUE_RE = re.compile(r"^(https?|jdbc:[a-z0-9]+|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?)://", re.I)
+URL_VALUE_RE = re.compile(r"^(https?|jdbc:[a-z0-9]+|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?|grpc|static|dns)://", re.I)
+ADO_RE = re.compile(r"(?:^|;)\s*(?:server|data source|host)\s*=\s*(?:tcp:)?(?P<host>[^;,]+)[^;]*;.*?"
+                    r"(?:database|initial catalog)\s*=\s*(?P<db>[^;]+)", re.I)
 JDBC_RE = re.compile(r"^jdbc:(?P<tech>[a-z0-9]+):(?:thin:@)?//?(?P<host>[^:/;]+)(?::\d+)?[/;:]?(?P<db>[\w.-]*)", re.I)
 DSN_RE = re.compile(r"^(?P<tech>[a-z0-9+]+)://(?:[^@/]+@)?(?P<host>[^:/]+)(?::\d+)?/?(?P<db>[\w.-]*)", re.I)
 FRONTEND_DEPS = {"react", "@angular/core", "vue", "next", "svelte"}
 BACKEND_DEPS = {"express", "@nestjs/core", "fastify", "koa", "hapi"}
+# build dependency -> framework label (GraphQL/gRPC servers are recognised from the build, not only imports)
+BUILD_DEPS = {
+    "spring-boot-starter-graphql": "spring-graphql", "graphql-dgs": "netflix-dgs", "graphql-java": "graphql-java",
+    "grpc-spring-boot-starter": "grpc", "grpc-server-spring-boot-starter": "grpc", "io.grpc": "grpc",
+    "spring-boot-starter-web-services": "spring-ws", "jaxws": "jax-ws", "spring-cloud-aws": "spring-cloud-aws",
+    "software.amazon.awssdk": "aws-sdk", "spring-boot": "spring-boot", "ktor-server": "ktor",
+}
+NODE_DEPS = {"@apollo/server": "apollo-server", "apollo-server": "apollo-server", "apollo-server-express": "apollo-server",
+             "@nestjs/graphql": "nestjs-graphql", "graphql-yoga": "graphql-yoga", "mercurius": "mercurius",
+             "@grpc/grpc-js": "grpc", "soap": "node-soap"}
 
 
 @dataclass
@@ -62,6 +74,8 @@ def classify_url(value: str) -> tuple[OutboundKind, str] | None:
         return OutboundKind.DATABASE, m.group("tech").lower()
     if v.lower().startswith(("http://", "https://")):
         return OutboundKind.HTTP, "http"
+    if v.lower().startswith(("grpc://", "static://", "dns://")):
+        return OutboundKind.GRPC, "grpc"
     if m := DSN_RE.match(v):
         tech = m.group("tech").lower().split("+")[0]
         if tech in ("amqp", "amqps"):
@@ -80,12 +94,20 @@ def _scan_properties(flat: dict[str, str], repo: str, rel: str, lines: list[str]
         if lk.endswith(("bootstrap-servers", "bootstrap.servers")):
             facts.frameworks.add("kafka")
             continue
+        if (ado := ADO_RE.search(value)) and "connectionstrings" in lk:  # .NET ConnectionStrings
+            ev = Evidence(repo=repo, path=rel, line=_line_of(lines, key.split(".")[-1]), snippet=key)
+            facts.outbound.append(OutboundCall(
+                kind=OutboundKind.DATABASE, target=f"sqlserver://{ado.group('host').strip()}/{ado.group('db').strip()}",
+                detail=key, technology="sqlserver", evidence=ev))
+            continue
         if not URL_VALUE_RE.match(value):
             continue
         cls = classify_url(value)
         if cls is None:
             continue
         kind, tech = cls
+        if kind == OutboundKind.GRPC:  # static://host:port, dns:///host:port -> grpc://host:port
+            value = "grpc://" + re.sub(r"^\w+:/*", "", value)
         ev = Evidence(repo=repo, path=rel, line=_line_of(lines, key.split(".")[-1]), snippet=f"{key}={value}")
         facts.outbound.append(OutboundCall(kind=kind, target=value, detail=key, technology=tech, evidence=ev))
 
@@ -118,11 +140,28 @@ def scan_config_file(path: Path, repo: str, rel: str, facts: ConfigFacts) -> Non
                 k, v = line.split("=", 1)
                 flat[k.strip()] = v.strip().strip("\"'")
         _scan_properties(flat, repo, rel, lines, facts)
+    elif lower.startswith("appsettings") and lower.endswith(".json"):  # ASP.NET Core configuration
+        flat = {}
+        _flatten("", json.loads(content or "{}"), flat)
+        _scan_properties(flat, repo, rel, lines, facts)
+    elif lower in ("settings.gradle", "settings.gradle.kts"):
+        if m := re.search(r"rootProject\.name\s*=\s*[\"']([^\"']+)", content):
+            facts.name = facts.name or m.group(1)
+    elif lower == "go.mod":
+        if m := re.search(r"^module\s+(\S+)", content, re.M):
+            facts.name = facts.name or m.group(1).rstrip("/").split("/")[-1]
+    elif lower.endswith(".csproj"):
+        if m := re.search(r"<AssemblyName>([^<]+)</AssemblyName>", content):
+            facts.name = facts.name or m.group(1)
+        facts.name = facts.name or name.removesuffix(".csproj")
+        if "Microsoft.NET.Sdk.Web" in content:
+            facts.frameworks.add("aspnetcore")
     elif lower == "package.json":
         data = json.loads(content or "{}")
         facts.name = facts.name or data.get("name", "")
         deps = set(data.get("dependencies", {})) | set(data.get("devDependencies", {}))
         facts.frameworks |= {d for d in deps if d in FRONTEND_DEPS | BACKEND_DEPS | {"kafkajs", "axios"}}
+        facts.frameworks |= {fw for d, fw in NODE_DEPS.items() if d in deps}
         facts.is_frontend = bool(deps & FRONTEND_DEPS) and not (deps & BACKEND_DEPS)
     elif lower == "pyproject.toml":
         data = tomllib.loads(content)
@@ -133,8 +172,9 @@ def scan_config_file(path: Path, repo: str, rel: str, facts: ConfigFacts) -> Non
         body = re.sub(r"<parent>.*?</parent>", "", content, flags=re.S)
         if m := re.search(r"<artifactId>([^<]+)</artifactId>", body):
             facts.name = facts.name or m.group(1)
-        if "spring-boot" in content:
-            facts.frameworks.add("spring-boot")
+        facts.frameworks |= {fw for dep, fw in BUILD_DEPS.items() if dep in content}
+    elif lower in ("build.gradle", "build.gradle.kts"):
+        facts.frameworks |= {fw for dep, fw in BUILD_DEPS.items() if dep in content}
     elif lower in ("openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml", "swagger.json"):
         data = yaml.safe_load(content) or {}
         for p, ops in (data.get("paths") or {}).items():
@@ -188,7 +228,8 @@ def scan_compose(path: Path, repo: str, rel: str) -> dict[str, ConfigFacts]:
 CONFIG_PATTERNS = (
     "application*.yml", "application*.yaml", "application*.properties", "bootstrap*.yml",
     ".env", ".env.*", "config.env", "package.json", "pyproject.toml", "pom.xml",
-    "openapi.*", "swagger.*", "README*", "readme*",
+    "openapi.*", "swagger.*", "README*", "readme*", "appsettings*.json", "settings.gradle", "settings.gradle.kts",
+    "go.mod", "*.csproj", "build.gradle", "build.gradle.kts",
 )
 
 

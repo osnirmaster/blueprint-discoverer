@@ -15,6 +15,7 @@ from ..model import (
     DataStore,
     Evidence,
     ExternalSystem,
+    InfraResource,
     Link,
     LinkKind,
     LinkResult,
@@ -34,8 +35,24 @@ RULE_CONFIDENCE = {
     "R-ASYNC-TOPIC": 0.95,  # same topic name on both sides
     "R-DATA-DSN": 0.95,  # JDBC/DSN in config or code
     "R-DATA-ENTITY": 0.6,  # ORM entity without explicit datasource
+    "R-GRPC-HOST": 0.95,  # gRPC channel address host equals a component alias
+    "R-GRPC-SERVICE": 0.9,  # client stub service == service implemented by exactly one component
+    "R-GRPC-EXTERNAL": 0.8,  # gRPC address host does not belong to any scanned component
+    "R-GRAPHQL-FIELD": 0.8,  # operation root field exposed by exactly one component
+    "R-SOAP-SERVICE": 0.85,  # SOAP client service/contract name == service exposed by one component
+    "R-DATA-CLOUD": 0.9,  # AWS SDK call naming a DynamoDB table / S3 bucket
+    "R-CLOUD-IAC-SUFFIX": 0.75,  # SDK name matches an IaC resource only up to an environment prefix/suffix
+    "R-IAC-SUBSCRIPTION": 0.95,  # SNS -> SQS/Lambda subscription declared in IaC
+    "R-IAC-EVENT-SOURCE": 0.85,  # SQS/Kinesis/DynamoDB/SNS/S3 event source feeding a component's function
+    "R-IAC-ENV-REF": 0.7,  # resource referenced by a component function's environment (direction unknown)
 }
-PROTOCOL = {"http": "HTTP", "https": "HTTPS", "kafka": "TCP", "rabbitmq": "AMQP", "jms": "TCP"}
+PROTOCOL = {"http": "HTTP", "https": "HTTPS", "kafka": "TCP", "rabbitmq": "AMQP", "jms": "TCP", "grpc": "HTTP",
+            "sqs": "HTTPS", "sns": "HTTPS", "kinesis": "HTTPS", "dynamodb": "HTTPS", "s3": "HTTPS"}
+CLOUD_TECH = {"dynamodb-table": "dynamodb", "s3-bucket": "s3", "sqs-queue": "sqs", "sns-topic": "sns",
+              "kinesis-stream": "kinesis"}
+TOPIC_KIND = {"sqs": "queue", "rabbitmq": "queue", "jms": "queue", "kinesis": "stream", "sns": "topic"}
+REMOTE_KIND = {OutboundKind.HTTP: LinkKind.HTTP, OutboundKind.GRAPHQL: LinkKind.GRAPHQL,
+               OutboundKind.SOAP: LinkKind.SOAP, OutboundKind.GRPC: LinkKind.GRPC}
 DB_PROTOCOL = "JDBC"
 PLACEHOLDER_RE = re.compile(r"[{$]\{?(\w+)\}?")
 
@@ -50,6 +67,13 @@ def _path(target: str) -> str:
     return urlparse(target).path if "://" in target else ""
 
 
+def cloud_key(name: str) -> str:
+    """Environment-independent key of a cloud resource name: placeholders are dropped."""
+    stripped = re.sub(r"\$\{[^}]*\}|\{[^}]*\}|%[sd]", "", name)
+    key = slugify(stripped)
+    return key if key != "unnamed" else slugify(name)
+
+
 def template_regex(path: str) -> re.Pattern:
     parts = re.split(r"(\{[^}]+\}|:[A-Za-z_]\w*)", path.rstrip("/"))
     rx = "".join("[^/]+" if (p.startswith(("{", ":"))) else re.escape(p) for p in parts)
@@ -58,6 +82,7 @@ def template_regex(path: str) -> re.Pattern:
 
 class DependencyResolver:
     def __init__(self, scans: list[RepoScan]):
+        self.scans = scans
         self.components: list[Component] = [c for s in scans for c in s.components]
         self.alias_index: dict[str, str] = {}
         for c in self.components:
@@ -68,18 +93,22 @@ class DependencyResolver:
         self._datastores: dict[str, DataStore] = {}
         self._topics: dict[str, Topic] = {}
         self._externals: dict[str, ExternalSystem] = {}
+        self._iac: dict[tuple[str, str], InfraResource] = {}  # (technology, cloud_key) -> declaration
+        self._iac_nodes: dict[tuple[str, str], str] = {}  # (repo, IaC ref) -> node id | component id
 
     # ---------------------------------------------------------------- public
     def resolve(self) -> LinkResult:
+        self._infrastructure()
         for comp in sorted(self.components, key=lambda c: c.id):
             for call in comp.outbound:
-                if call.kind == OutboundKind.HTTP:
-                    self._http(comp, call)
+                if call.kind in REMOTE_KIND:
+                    self._remote(comp, call)
                 elif call.kind in (OutboundKind.MESSAGING_PUBLISH, OutboundKind.MESSAGING_SUBSCRIBE):
                     self._messaging(comp, call)
                 elif call.kind == OutboundKind.DATABASE:
                     self._database(comp, call)
             self._entities_without_dsn(comp)
+        self._infra_relations()
         self.result.links = sorted(self._links.values(), key=lambda l: l.id)
         self.result.datastores = sorted(self._datastores.values(), key=lambda d: d.id)
         self.result.topics = sorted(self._topics.values(), key=lambda t: t.id)
@@ -129,47 +158,183 @@ class DependencyResolver:
         return hits.pop() if len(hits) == 1 else None
 
     # ---------------------------------------------------------------- rules
-    def _http(self, comp: Component, call: OutboundCall) -> None:
+    def _external(self, comp: Component, host: str, call: OutboundCall, rule: str, protocol: str,
+                  description: str) -> None:
+        ext_id = "ext-" + slugify(host)
+        self._externals.setdefault(ext_id, ExternalSystem(id=ext_id, name=host, target=call.target))
+        self._externals[ext_id].evidence.append(call.evidence)
+        self._add(LinkKind.EXTERNAL, comp.id, ext_id, rule, call.evidence, protocol, description)
+
+    def _serving(self, comp: Component, protocol: str, match) -> str | None:
+        """The single other component exposing an interface of `protocol` that satisfies `match`."""
+        hits = {c.id for c in self.components if c.id != comp.id
+                for e in c.endpoints if e.protocol == protocol and match(e.path)}
+        return hits.pop() if len(hits) == 1 else None
+
+    def _remote(self, comp: Component, call: OutboundCall) -> None:
+        """Synchronous request/response dependencies (downstream caller -> upstream provider)."""
+        kind = REMOTE_KIND[call.kind]
+        if call.kind == OutboundKind.GRPC:
+            return self._grpc(comp, call)
         method_path = call.detail if " " in call.detail else f"{call.detail} {_path(call.target)}".strip()
+        path = _path(call.target) or (call.detail.split(" ", 1)[1] if " " in call.detail else "")
+        if kind == LinkKind.HTTP and path.rstrip("/").endswith("/graphql"):
+            kind = LinkKind.GRAPHQL
+        elif kind == LinkKind.HTTP and (path.lower().endswith((".asmx", ".svc")) or "wsdl" in call.target.lower()):
+            kind = LinkKind.SOAP
         host = _host(call.target)
+        protocol = PROTOCOL.get(urlparse(call.target).scheme, "HTTP") if host else "HTTP"
         if host:
             target = self._match_alias(host)
             if target:
-                self._add(LinkKind.HTTP, comp.id, target, "R-HTTP-HOST", call.evidence,
-                          PROTOCOL.get(urlparse(call.target).scheme, "HTTP"), method_path)
+                if kind == LinkKind.SOAP:  # name the operations of the single SOAP service the upstream exposes
+                    services = {e.path.split(".")[0] for c in self.components if c.id == target
+                                for e in c.endpoints if e.protocol == "soap"}
+                    method_path = f"SOAP {services.pop()}.*" if len(services) == 1 else method_path
+                self._add(kind, comp.id, target, "R-HTTP-HOST", call.evidence, protocol, method_path)
                 return
-            target = self._match_path(_path(call.target), comp.id)
+            target = self._match_path(path, comp.id) if kind == LinkKind.HTTP else None
             if target:
-                self._add(LinkKind.HTTP, comp.id, target, "R-HTTP-PATH", call.evidence, "HTTP", method_path)
+                self._add(kind, comp.id, target, "R-HTTP-PATH", call.evidence, "HTTP", method_path)
                 return
-            ext_id = "ext-" + slugify(host)
-            self._externals.setdefault(ext_id, ExternalSystem(id=ext_id, name=host, target=call.target))
-            self._externals[ext_id].evidence.append(call.evidence)
-            self._add(LinkKind.EXTERNAL, comp.id, ext_id, "R-HTTP-EXTERNAL", call.evidence,
-                      PROTOCOL.get(urlparse(call.target).scheme, "HTTPS"), method_path)
+            self._external(comp, host, call, "R-HTTP-EXTERNAL", PROTOCOL.get(urlparse(call.target).scheme, "HTTPS"),
+                           method_path)
+            return
+        if kind == LinkKind.GRAPHQL and " " in call.detail:  # QUERY Query.field
+            field = call.detail.split(" ", 1)[1]
+            if target := self._serving(comp, "graphql", lambda p: p == field):
+                self._add(kind, comp.id, target, "R-GRAPHQL-FIELD", call.evidence, "HTTP", call.detail)
+                return
+            self.result.unresolved.append(call)
+            return
+        if kind == LinkKind.SOAP and call.target:
+            name = call.target
+            if target := self._serving(comp, "soap", lambda p: p.split(".")[0] in (name, name.removesuffix("Service"),
+                                                                                   f"{name}Service")):
+                self._add(kind, comp.id, target, "R-SOAP-SERVICE", call.evidence, "HTTP", call.detail)
+                return
+        if not call.target:  # declarative client without base URL (Retrofit, Refit): match by path only
+            target = self._match_path(path, comp.id)
+            if target:
+                self._add(kind, comp.id, target, "R-HTTP-PATH", call.evidence, "HTTP", method_path)
+                return
+            self.result.unresolved.append(call)
             return
         # named client (Feign) or bare alias
         target = self._match_alias(call.target)
         if target:
-            self._add(LinkKind.HTTP, comp.id, target, "R-HTTP-CLIENT-NAME", call.evidence, "HTTP", method_path)
+            self._add(kind, comp.id, target, "R-HTTP-CLIENT-NAME", call.evidence, "HTTP", method_path)
             return
         placeholder = PLACEHOLDER_RE.search(call.target)
         if placeholder and (target := self._match_env_name(placeholder.group(1))):
-            self._add(LinkKind.HTTP, comp.id, target, "R-HTTP-ENV-NAME", call.evidence, "HTTP", method_path)
+            self._add(kind, comp.id, target, "R-HTTP-ENV-NAME", call.evidence, "HTTP", method_path)
             return
         self.result.unresolved.append(call)
 
+    def _grpc(self, comp: Component, call: OutboundCall) -> None:
+        if "://" in call.target:
+            host = _host(call.target.replace("grpc://", "http://", 1))
+            if target := self._match_alias(host):
+                self._add(LinkKind.GRPC, comp.id, target, "R-GRPC-HOST", call.evidence, "HTTP", "gRPC channel")
+            elif host:
+                self._external(comp, host, call, "R-GRPC-EXTERNAL", "HTTP", "gRPC channel")
+            return
+        short = call.target.split(".")[-1]
+        upstream = {c.id: e.path for c in self.components if c.id != comp.id for e in c.endpoints
+                    if e.protocol == "grpc" and e.path.strip("/").split("/")[0].split(".")[-1] == short}
+        if len(upstream) == 1:
+            (target, path), = upstream.items()
+            service = path.strip("/").split("/")[0]
+            self._add(LinkKind.GRPC, comp.id, target, "R-GRPC-SERVICE", call.evidence, "HTTP", f"RPC /{service}/*")
+            return
+        target = self._match_alias(call.target)  # @GrpcClient("accounts") channel names
+        if target:
+            self._add(LinkKind.GRPC, comp.id, target, "R-HTTP-CLIENT-NAME", call.evidence, "HTTP", call.detail)
+            return
+        self.result.unresolved.append(call)
+
+    # ---------------------------------------------------------------- cloud resources (AWS)
+    def _cloud_id(self, technology: str, name: str) -> tuple[str, str]:
+        """(node id, rule) for a resource named in code, preferring the IaC declaration."""
+        key = cloud_key(name)
+        if (technology, key) in self._iac:
+            return f"{technology}-{key}", ""
+        near = [k for (t, k) in self._iac if t == technology and (k.endswith(f"-{key}") or key.endswith(f"-{k}"))]
+        if len(near) == 1:
+            return f"{technology}-{near[0]}", "R-CLOUD-IAC-SUFFIX"
+        return f"{technology}-{key}", ""
+
+    def _cloud_node(self, node_id: str, technology: str, name: str, ev: Evidence | None, iac: str = "") -> None:
+        if technology in ("dynamodb", "s3"):
+            node = self._datastores.setdefault(node_id, DataStore(
+                id=node_id, name=name, technology=technology,
+                kind="object-storage" if technology == "s3" else "database"))
+        else:
+            node = self._topics.setdefault(node_id, Topic(id=node_id, name=name, technology=technology,
+                                                          kind=TOPIC_KIND.get(technology, "topic")))
+        if ev is not None and ev.ref() not in {e.ref() for e in node.evidence}:
+            node.evidence.append(ev)
+        if iac and iac not in node.iac:
+            node.iac.append(iac)
+
+    def _infrastructure(self) -> None:
+        for scan in self.scans:
+            for res in scan.infrastructure:
+                if res.type == "lambda-function":
+                    if res.owner:
+                        self._iac_nodes[(scan.repo, res.ref)] = res.owner
+                    continue
+                tech = CLOUD_TECH.get(res.type)
+                if tech is None:
+                    continue
+                key = cloud_key(res.name)
+                self._iac.setdefault((tech, key), res)
+                node_id = f"{tech}-{key}"
+                self._iac_nodes[(scan.repo, res.ref)] = node_id
+                self._cloud_node(node_id, tech, res.name, None, res.evidence.ref())
+
+    def _infra_relations(self) -> None:
+        components = {c.id for c in self.components}
+        functions = {(s.repo, r.ref): r for s in self.scans for r in s.infrastructure if r.type == "lambda-function"}
+        for scan in self.scans:
+            for rel in scan.infra_relations:
+                src = self._iac_nodes.get((scan.repo, rel.source))
+                dst = self._iac_nodes.get((scan.repo, rel.destination))
+                if src is None or dst is None:
+                    continue
+                rule = "R-IAC-SUBSCRIPTION" if rel.kind == "subscription" else "R-IAC-EVENT-SOURCE"
+                desc = "subscribes to" if rel.kind == "subscription" else "triggers"
+                self._add(LinkKind.ASYNC, src, dst, rule, rel.evidence, "HTTPS", f"{desc} {dst}",
+                          via=src if src not in components else "")
+            for (repo, _ref), fn in functions.items():
+                if repo != scan.repo or not fn.owner:
+                    continue
+                for var, ref in sorted(fn.environment.items()):
+                    node = self._iac_nodes.get((repo, ref))
+                    if node is None or node in components:
+                        continue
+                    kind = LinkKind.DATA if node in self._datastores else LinkKind.ASYNC
+                    self._add(kind, fn.owner, node, "R-IAC-ENV-REF", fn.evidence, "HTTPS",
+                              f"uses {node} (env {var})", via=node if kind == LinkKind.ASYNC else "")
+
     def _messaging(self, comp: Component, call: OutboundCall) -> None:
-        tid = "topic-" + slugify(call.target)
-        topic = self._topics.setdefault(tid, Topic(id=tid, name=call.target, technology=call.technology))
-        if call.evidence.ref() not in {e.ref() for e in topic.evidence}:
-            topic.evidence.append(call.evidence)
+        rule = "R-ASYNC-TOPIC"
+        if call.technology in ("sqs", "sns", "kinesis"):
+            tid, suffix_rule = self._cloud_id(call.technology, call.target)
+            rule = suffix_rule or rule
+            self._cloud_node(tid, call.technology, call.target, call.evidence)
+        else:
+            tid = "topic-" + slugify(call.target)
+            topic = self._topics.setdefault(tid, Topic(id=tid, name=call.target, technology=call.technology,
+                                                       kind=TOPIC_KIND.get(call.technology, "topic")))
+            if call.evidence.ref() not in {e.ref() for e in topic.evidence}:
+                topic.evidence.append(call.evidence)
         proto = PROTOCOL.get(call.technology, "TCP")
         if call.kind == OutboundKind.MESSAGING_PUBLISH:
-            self._add(LinkKind.ASYNC, comp.id, tid, "R-ASYNC-TOPIC", call.evidence, proto,
+            self._add(LinkKind.ASYNC, comp.id, tid, rule, call.evidence, proto,
                       f"publishes to {call.target}", via=tid)
         else:
-            self._add(LinkKind.ASYNC, tid, comp.id, "R-ASYNC-TOPIC", call.evidence, proto,
+            self._add(LinkKind.ASYNC, tid, comp.id, rule, call.evidence, proto,
                       f"consumed from {call.target}", via=tid)
 
     def _datastore_id(self, target: str) -> tuple[str, str]:
@@ -182,6 +347,13 @@ class DependencyResolver:
     def _database(self, comp: Component, call: OutboundCall) -> None:
         if not call.target:
             return  # entities are handled once the component's datasources are known
+        if call.technology in ("dynamodb", "s3") and "://" in call.target:
+            name = call.target.split("://", 1)[1]
+            did, suffix_rule = self._cloud_id(call.technology, name)
+            self._cloud_node(did, call.technology, name, call.evidence)
+            self._add(LinkKind.DATA, comp.id, did, suffix_rule or "R-DATA-CLOUD", call.evidence, "HTTPS",
+                      f"{call.detail or 'uses'} {name}".strip())
+            return
         did, name = self._datastore_id(call.target)
         ds = self._datastores.setdefault(did, DataStore(id=did, name=name, technology=call.technology))
         ds.evidence.append(call.evidence)

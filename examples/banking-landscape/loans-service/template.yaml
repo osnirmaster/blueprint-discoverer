@@ -1,0 +1,24 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: loans-service data and events
+Resources:
+  LoanContractsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: loan-contracts
+      BillingMode: PAY_PER_REQUEST
+  LoanEventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: loan-events
+      Subscription:
+        - Protocol: sqs
+          Endpoint: !GetAtt LoanNotificationsQueue.Arn
+  LoanNotificationsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: loan-notifications
+  LoanDocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: loan-documents

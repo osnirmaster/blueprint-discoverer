@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package bank.credit.v1;
+
+// Customer credit rating used by lending and card products.
+service CreditScoring {
+  rpc ScoreCustomer(ScoreRequest) returns (ScoreReply);
+  rpc GetCustomerRating(RatingRequest) returns (RatingReply);
+}
+
+message ScoreRequest { string customer_id = 1; }
+message ScoreReply { int32 score = 1; bool approved = 2; }
+message RatingRequest { string customer_id = 1; }
+message RatingReply { string rating = 1; }

@@ -15,10 +15,14 @@ import { api, ApplicationDetail, CalmRelationship } from "../api";
 import { Confidence, EvidenceList, Loadable, NodeType } from "../components/common";
 import { useAsync } from "../hooks";
 
-function RelTable({ title, rels }: { title: string; rels: CalmRelationship[] }) {
+const KIND_LABEL: Record<string, string> = {
+  http: "REST", grpc: "gRPC", graphql: "GraphQL", soap: "SOAP", async: "Assíncrona", data: "Dados", external: "Externa",
+};
+
+function RelTable({ title, description, rels }: { title: string; description: string; rels: CalmRelationship[] }) {
   return (
     <Table
-      header={<Header variant="h3" counter={`(${rels.length})`}>{title}</Header>}
+      header={<Header variant="h3" counter={`(${rels.length})`} description={description}>{title}</Header>}
       items={rels}
       wrapLines
       empty={<Box textAlign="center">Nenhum</Box>}
@@ -29,6 +33,7 @@ function RelTable({ title, rels }: { title: string; rels: CalmRelationship[] }) 
             ? <Link href={`#/applications/${r.other["unique-id"]}`}>{r.other.name}</Link> : r.other?.name,
         },
         { id: "type", header: "Tipo", cell: (r) => r.other && <NodeType type={r.other["node-type"]} /> },
+        { id: "kind", header: "Dependência", cell: (r) => KIND_LABEL[r.metadata?.["dependency-kind"] ?? ""] ?? r.metadata?.["dependency-kind"] },
         { id: "protocol", header: "Protocolo", cell: (r) => r.protocol },
         { id: "desc", header: "Detalhe", cell: (r) => r.description },
         { id: "conf", header: "Confiança", cell: (r) => <Confidence value={r.metadata?.confidence} /> },
@@ -108,7 +113,8 @@ export default function ApplicationDetailPage() {
                   <Table
                     items={endpoints}
                     columnDefinitions={[
-                      { id: "m", header: "Método", cell: (e) => e.method },
+                      { id: "proto", header: "Protocolo", cell: (e) => KIND_LABEL[e.protocol ?? "http"] ?? e.protocol },
+                      { id: "m", header: "Operação", cell: (e) => e.method },
                       { id: "p", header: "Caminho", cell: (e) => <Box variant="code">{e.path}</Box> },
                       { id: "h", header: "Handler", cell: (e) => e.handler || "—" },
                       { id: "ev", header: "Evidência", cell: (e) => <EvidenceList refs={e.evidence ? [e.evidence] : []} /> },
@@ -120,8 +126,8 @@ export default function ApplicationDetailPage() {
                 id: "deps", label: "Dependências",
                 content: (
                   <SpaceBetween size="l">
-                    <RelTable title="Depende de" rels={data.outbound} />
-                    <RelTable title="Usado por" rels={data.inbound} />
+                    <RelTable title="Upstream" description="Do que este componente depende (ele é o downstream)" rels={data.outbound} />
+                    <RelTable title="Downstream" description="Quem depende deste componente" rels={data.inbound} />
                   </SpaceBetween>
                 ),
               },

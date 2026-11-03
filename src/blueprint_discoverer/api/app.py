@@ -11,13 +11,15 @@ from pydantic import BaseModel
 
 from ..graph.store import GraphStore
 from ..workspace import REPO_ROOT, Workspace, read_json
+from .console import Console, console_router
 
 
 class CypherQuery(BaseModel):
     query: str
 
 
-def create_app(ws: Workspace, web_dist: Path | None = None) -> FastAPI:
+def create_app(ws: Workspace, web_dist: Path | None = None, config_path: Path | None = None,
+               fs_root: Path | None = None) -> FastAPI:
     app = FastAPI(title="Blueprint Discoverer API", version="0.1.0")
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                        allow_methods=["*"], allow_headers=["*"])
@@ -36,6 +38,15 @@ def create_app(ws: Workspace, web_dist: Path | None = None) -> FastAPI:
             state["graph"] = GraphStore(ws.graph_path, read_only=True)
             state["mtime"] = mtime
         return state["graph"]
+
+    def release_graph() -> None:
+        """Close the read-only handle so a scan can rebuild the graph files."""
+        if state["graph"] is not None:
+            state["graph"].close()
+        state["graph"], state["mtime"] = None, None
+
+    console = Console(ws, config_path, fs_root or Path.home(), before_scan=release_graph)
+    app.include_router(console_router(console))
 
     def nodes_by_id() -> dict[str, dict]:
         return {n["unique-id"]: n for n in calm()["nodes"]}

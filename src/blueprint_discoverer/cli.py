@@ -214,14 +214,15 @@ def wiki(config: Path = ConfigOpt, workspace: Path = WsOpt) -> None:
 
 
 @app.command()
-def serve(config: Path = ConfigOpt, workspace: Path = WsOpt, host: str = "127.0.0.1", port: int = 8765) -> None:
-    """Serve the REST API (and the built web UI, if present)."""
+def serve(config: Path = ConfigOpt, workspace: Path = WsOpt, host: str = "127.0.0.1", port: int = 8765,
+          fs_root: Path = typer.Option(None, help="Folder the web console may browse and scan (default: home).")) -> None:
+    """Serve the REST API, the web UI and its scan console."""
     import uvicorn
 
     from .api.app import create_app
 
-    p = _pipeline(config, workspace)
-    uvicorn.run(create_app(p.ws), host=host, port=port)
+    ws = Workspace(workspace or config.resolve().parent / ".blueprint")
+    uvicorn.run(create_app(ws, config_path=config.resolve(), fs_root=fs_root), host=host, port=port)
 
 
 @bian_app.command("import")
